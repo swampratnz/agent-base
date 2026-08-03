@@ -364,7 +364,15 @@ const tsxBin = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
 const result = spawnSync(
   tsxBin,
   [...runnerFlags, '--test-reporter=tap', '--test-name-pattern=^SECURITY:', ...testFiles.map((f) => f.rel)],
-  { cwd: repoRoot, encoding: 'utf8' },
+  // LOG_LEVEL is defaulted here rather than in the npm script: a
+  // `VAR=value cmd` prefix is shell syntax cmd.exe does not have, so setting
+  // it there made `npm run test:security` fail outright on Windows. An
+  // explicit LOG_LEVEL still wins.
+  {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: { ...process.env, LOG_LEVEL: process.env.LOG_LEVEL || 'silent' },
+  },
 );
 
 process.stdout.write(result.stdout ?? '');
