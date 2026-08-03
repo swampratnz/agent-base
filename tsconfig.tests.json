@@ -68,6 +68,7 @@
     "tests/mutedRoleAlertNotice.test.ts",
     "tests/noticeCatalogue.test.ts",
     "tests/notifications.test.ts",
+    "tests/packageExports.test.ts",
     "tests/pendingActions.test.ts",
     "tests/pendingAlertQueue.test.ts",
     "tests/provenanceTrust.test.ts",

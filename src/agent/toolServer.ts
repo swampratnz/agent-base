@@ -32,6 +32,15 @@ type ToolServerToolResult = Awaited<ReturnType<SdkMcpToolDefinition['handler']>>
  * read-only annotation. The community registry's richer `ToolDef` (tiers,
  * platform restrictions, feature flags) satisfies this shape; those extra
  * fields are consumed by their own registries, never here.
+ *
+ * `handler` is declared with METHOD syntax, deliberately: that makes `Ctx`
+ * bivariant, so a concrete `ToolServerToolDef<ToolContext>` is assignable to
+ * `ToolServerToolDef<unknown>` and a module can therefore satisfy the
+ * unparameterised `AgentModule` without a cast (see `AgentModule<Ctx>` in
+ * createAgent.ts). The laxity is confined to the type level and costs nothing
+ * at runtime: the ONLY caller is `buildToolServer` below, which passes each
+ * handler exactly the value this same parts object's `makeContext` returned,
+ * so no `unknown` is ever actually handed to a handler expecting a context.
  */
 export interface ToolServerToolDef<Ctx> {
   name: string;
@@ -39,7 +48,7 @@ export interface ToolServerToolDef<Ctx> {
   schema: ZodRawShape;
   readOnlyHint: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  handler: (args: any, ctx: Ctx) => Promise<ToolServerToolResult>;
+  handler(args: any, ctx: Ctx): Promise<ToolServerToolResult>;
 }
 
 /** The community-registered parts `buildToolServer` composes per turn. */

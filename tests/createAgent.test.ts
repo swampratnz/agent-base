@@ -8,6 +8,7 @@ process.env.DATABASE_URL ??= 'postgres://test:test@127.0.0.1:5432/test';
 
 const { TEST_NOTICE_AXES, TEST_NOTICE_ENTRIES } = await import('./fixtures/noticePack.js');
 import type { AgentModule } from '../src/createAgent.js';
+import type { ToolServerParts } from '../src/agent/toolServer.js';
 const { createAgent, assertRegistrationsComplete, planComposition } = await import('../src/createAgent.js');
 const { PRE_TURN_SPINE, registerPreTurnIntercept, registeredPreTurnIntercepts } =
   await import('../src/routerIntercepts.js');
@@ -25,13 +26,61 @@ const { defaultPersonaId } = await import('../src/agent/personaRegistry.js');
  * runs test FILES in separate processes, so no other file is affected.
  */
 
+/**
+ * A module's own per-turn tool context — the thing `makeContext` builds and
+ * every handler receives. A real one carries the caller, the adapter and the
+ * turn state; two fields is enough to make the type distinct from `unknown`,
+ * which is the whole point of the fixtures below.
+ */
+interface TestToolContext {
+  callerId: string;
+  isAdmin: boolean;
+}
+
+/**
+ * Real tool-server parts over `TestToolContext` — the shape a module actually
+ * has, written with NO cast.
+ *
+ * This is a compile-time regression test for 0.1.0's
+ * `toolServerParts?: ToolServerParts<never>`, which was uninhabitable
+ * (`makeContext` returns the context, and only `never` is assignable to
+ * `never`), so the first consumer had to write
+ * `PARTS as unknown as AgentModule['toolServerParts']`. `tsconfig.tests.json`
+ * lists this file, so `npm run typecheck` fails if the field ever becomes
+ * unsatisfiable again.
+ */
+const TYPED_PARTS: ToolServerParts<TestToolContext> = {
+  name: 't',
+  makeContext: (caller) => ({ callerId: caller.userId, isAdmin: caller.role === 'admin' }),
+  registry: [
+    {
+      name: 'mcp__t__ask',
+      description: 'ask',
+      schema: {},
+      readOnlyHint: true,
+      // `ctx` is TestToolContext here, not `unknown` — a handler that reads a
+      // context field is exactly what the cast used to hide.
+      handler: (_args, ctx) => Promise.resolve({ content: [{ type: 'text' as const, text: ctx.callerId }] }),
+    },
+  ],
+};
+
+/** Pinned `Ctx`: every handler is checked against the module's real context. */
+const PINNED_CTX_MODULE: AgentModule<TestToolContext> = { name: 'pinned', toolServerParts: TYPED_PARTS };
+
+/**
+ * Unpinned: the bare `AgentModule` a consumer writes when it does not care to
+ * name its context type still takes the same parts object, cast-free.
+ */
+const DEFAULTED_CTX_MODULE: AgentModule = { name: 'defaulted', toolServerParts: TYPED_PARTS };
+
 /** A complete, minimal module: exactly enough to satisfy every requirement. */
 function completeModule(overrides: Partial<AgentModule> = {}): AgentModule {
   return {
     name: 'test-module',
     notices: { axes: TEST_NOTICE_AXES, entries: TEST_NOTICE_ENTRIES },
     toolTiers: { member: ['mcp__t__ask'], admin: [], superAdmin: [], discordOnly: [] },
-    toolServerParts: { name: 't', makeContext: () => undefined as never, registry: [] },
+    toolServerParts: TYPED_PARTS,
     flaggedToolPredicates: [],
     skills: { enabledSkills: ['getting-started'], skillsDir: '/tmp/skills' },
     promptSections: {
@@ -51,6 +100,22 @@ function completeModule(overrides: Partial<AgentModule> = {}): AgentModule {
     ...overrides,
   };
 }
+
+test('a module supplies real tool-server parts over its own context type, with no cast', () => {
+  // The assertions here are trivial by design — the test is the DECLARATIONS
+  // above, which `npm run typecheck` compiles. This body only keeps them from
+  // being dead code, and pins that a pinned-`Ctx` and a defaulted-`Ctx`
+  // module carry the identical parts object rather than a widened copy.
+  assert.equal(PINNED_CTX_MODULE.toolServerParts, TYPED_PARTS);
+  assert.equal(DEFAULTED_CTX_MODULE.toolServerParts, TYPED_PARTS);
+  // Both go through `planComposition` as ordinary modules: the type parameter
+  // is erased, so a heterogeneous module list composes as it always did.
+  assert.throws(
+    () => planComposition([PINNED_CTX_MODULE, DEFAULTED_CTX_MODULE]),
+    /tool-server parts/,
+    'two modules claiming the same singleton is still a plan-pass rejection',
+  );
+});
 
 test('createAgent rejects a composition it cannot serve a turn with, naming EVERY gap at once', async () => {
   // The whole point of the gate: community-agent discovered a forgotten

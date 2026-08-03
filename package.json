@@ -1,15 +1,24 @@
 {
   "name": "@swampratnz/agent-base",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Community-agnostic base framework for Claude Agent SDK bots: platform adapters, RBAC, persistent memory, confirm-gated tools, and a module API for building specific agents on top.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "_comment_exports": "Node's exports map is an ALLOW-LIST: a subpath with no entry fails resolution with ERR_PACKAGE_PATH_NOT_EXPORTED, and TypeScript reports the same gap as TS2307. The `.` barrel is a ~15-symbol convenience surface (createAgent, migrate, the schema manifest); a real module imports the tree directly — community-agent alone imports 53 modules — so the two wildcards below export every compiled module with its types. `./*.js` is the form to write, matching this repo's own `.js`-suffixed internal specifiers (`@swampratnz/agent-base/router.js`); `./*` accepts the extensionless form as well, and Node prefers the longer suffix pattern, so `router.js` never resolves through `./*` to `dist/router.js.js`. Wildcards rather than 53 hand-written entries because an enumeration silently omits every module added after it was written — the failure mode being fixed here. This does mean the whole of `dist/` is public API surface: that is the intent of a framework consumed by composition, and `files` already decides what `dist/` contains.",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./*.js": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
     },
     "./package.json": "./package.json"
   },

@@ -95,8 +95,23 @@ import { logger } from './logger.js';
  * exist. `src/module-api/*` remains the published v0 shape for the extension
  * points whose runtime has not been lifted yet (adapters, jobs, ingest
  * sources); where the two disagree, this file is what runs.
+ *
+ * `Ctx` is the module's own per-turn tool-context type — the thing its
+ * `toolServerParts.makeContext` builds and its tool handlers receive. The base
+ * never looks inside it, so the parameter exists purely so a module CAN pin it
+ * (`AgentModule<ToolContext>` typechecks every handler against the real
+ * context) and defaults to `unknown` so a module need not
+ * (`AgentModule` alone still accepts a real parts object, via the deliberate
+ * bivariance documented on `ToolServerToolDef`).
+ *
+ * It was `toolServerParts?: ToolServerParts<never>` in 0.1.0, which no module
+ * could satisfy — `makeContext` RETURNS the context, and nothing but `never`
+ * is assignable to `never` — so the first consumer had to cast. Nothing about
+ * the registration boundary required that: `registerToolServerParts` is
+ * generic and the runtime storage is `ToolServerParts<any>`; only this field's
+ * type was wrong.
  */
-export interface AgentModule {
+export interface AgentModule<Ctx = unknown> {
   /** Unique module name. Used in every error message this file raises. */
   name: string;
 
@@ -109,7 +124,7 @@ export interface AgentModule {
   /** Per-tier tool-name lists the RBAC surface is derived from. */
   toolTiers?: ToolTierRegistration;
   /** The tool inventory and its MCP server name. */
-  toolServerParts?: ToolServerParts<never>;
+  toolServerParts?: ToolServerParts<Ctx>;
   /** Feature-flag predicates dropping tools per turn. */
   flaggedToolPredicates?: readonly FlaggedToolPredicate[];
   /** The bundled-skills allowlist. */

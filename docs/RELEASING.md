@@ -399,6 +399,36 @@ npm install @swampratnz/agent-base
 whole point of the registry decision. A deploy host needs nothing beyond
 network access to `registry.npmjs.org`.
 
+### Importing
+
+The package exports the barrel **and its whole compiled tree**:
+
+```ts
+// The barrel: createAgent, the module manifest type, the notice catalogue,
+// migrate, the schema manifest.
+import { createAgent, type AgentModuleManifest } from '@swampratnz/agent-base';
+
+// Any module, by its source path with a `.js` extension — the same specifier
+// shape this repo uses internally.
+import { Router } from '@swampratnz/agent-base/router.js';
+import { runAgentTurn } from '@swampratnz/agent-base/agent/core.js';
+import { listAdminDisplayNames } from '@swampratnz/agent-base/storage/repository.js';
+import type { PlatformAdapter } from '@swampratnz/agent-base/platforms/types.js';
+```
+
+The extensionless form (`@swampratnz/agent-base/router`) resolves to the same
+module. Both carry types under `moduleResolution` `bundler`, `node16` and
+`nodenext`; the deprecated `node10` algorithm ignores `exports` entirely and
+cannot see either form.
+
+Two wildcards in `package.json` do this (`./*.js` and `./*`, both onto
+`./dist/*`), rather than an enumeration, because an enumeration silently omits
+every module added after it was written. `0.1.0` published neither, which made
+the package undependable for anything past the barrel — see
+[the exports comment in `package.json`](../package.json) and
+`tests/packageExports.test.ts`, which pins that every module under `src/` is
+addressable.
+
 ### The canary
 
 [`canary-community-agent.yml`](../.github/workflows/canary-community-agent.yml)
