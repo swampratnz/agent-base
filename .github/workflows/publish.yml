@@ -27,16 +27,49 @@ name: Publish to npm
 # that never went through a PR.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# PROVENANCE
+# AUTHENTICATION: TRUSTED PUBLISHING (OIDC) — THERE IS NO TOKEN
 # ─────────────────────────────────────────────────────────────────────────────
-# `--provenance` is ON. npm signs a build attestation naming this repository,
-# workflow and commit, which consumers can verify with `npm audit signatures`.
-# It requires (a) a PUBLIC source repository, (b) publishing from a supported
-# CI, and (c) `id-token: write`. swampratnz/agent-base is public — verified
-# against the GitHub API when this workflow was written — so all three hold. If
-# the repository is ever made private, provenance generation FAILS the publish:
-# drop the `--provenance` flag and the `id-token: write` permission below in
-# the same change, and put them back if it goes public again.
+# This workflow holds NO npm credential. Not a secret, not NODE_AUTH_TOKEN, not
+# NPM_TOKEN. It authenticates to npm by exchanging a short-lived GitHub OIDC
+# token for a publish grant that npm has pre-authorised against this exact
+# repository AND this exact workflow FILENAME. npm now warns against long-lived
+# automation tokens and steers to this instead — and the reason is plain: a
+# leaked automation token publishes from anywhere, forever, until someone
+# notices; an OIDC exchange is minted per run, expires in minutes, and is
+# useless outside this workflow file.
+#
+# Consequences worth knowing before you edit this file:
+#
+#   * RENAMING THIS FILE BREAKS PUBLISHING. The trusted publisher is registered
+#     against `publish.yml` by name. Rename it and every release fails to
+#     authenticate until someone updates the setting on npmjs.com.
+#   * `id-token: write` is what mints the OIDC token. Remove it and the publish
+#     cannot authenticate. It is granted at the JOB level only.
+#   * PROVENANCE IS AUTOMATIC. npm generates and publishes provenance
+#     attestations for a trusted-publishing release by default — the
+#     `--provenance` flag is redundant and is deliberately NOT passed. (This
+#     needs a public repository, which swampratnz/agent-base is: verified
+#     against the GitHub API when this workflow was written.)
+#   * VERSION FLOORS ARE HARD. Trusted publishing requires npm CLI >= 11.5.1
+#     and Node >= 22.14.0 (docs.npmjs.com/trusted-publishers). The npm bundled
+#     with the runner's Node can be older, so npm is upgraded explicitly below
+#     and BOTH versions are asserted in preflight — an old npm does not know
+#     what OIDC is and fails with an authentication error that reads like a
+#     misconfigured publisher.
+#   * NO PACKAGE-MANAGER CACHING on the release path, per npm's own example
+#     workflow ("never use caching in release builds").
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# THE FIRST RELEASE DOES NOT COME THROUGH HERE
+# ─────────────────────────────────────────────────────────────────────────────
+# npm cannot configure a trusted publisher for a package that does not exist
+# yet: the npmjs.com UI only offers the setting on an existing package
+# (npm/cli#8544, open). So v0.1.0 must be published BY HAND from a clean
+# checkout of the tag, with an interactive `npm login`, and only then can the
+# trusted publisher be configured — after which every subsequent release runs
+# through this workflow with no credential anywhere. docs/RELEASING.md has the
+# exact commands. Until that bootstrap happens, a real run of this workflow
+# will fail at `npm publish`, and that is expected rather than a defect.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # DRY RUN
@@ -44,14 +77,10 @@ name: Publish to npm
 # `workflow_dispatch` defaults to a dry run, and the dry-run path runs
 # EVERYTHING — every gate, the tarball contents check, and
 # `npm publish --dry-run` — so the whole release can be exercised before any
-# version is burned. The one thing it deliberately does not do is
-# `--provenance`: an attestation is only meaningful for an artifact that was
-# actually published, and generating one for a discarded tarball would prove
-# nothing. So the provenance flag itself is first exercised by the first real
-# publish; docs/RELEASING.md says so rather than pretending otherwise.
-#
-# A dry run needs no NPM_TOKEN, which is what lets the workflow be exercised
-# before the secret exists.
+# version is burned. A dry run does not authenticate at all, so it works today,
+# before the bootstrap publish and before any trusted publisher exists. What it
+# therefore cannot exercise is the OIDC exchange itself; docs/RELEASING.md says
+# so rather than pretending otherwise.
 
 on:
   push:
@@ -67,9 +96,9 @@ on:
         default: true
 
 # Least privilege. `id-token: write` is granted at the JOB level only, where
-# provenance needs it — not here, so nothing else in this file could ever mint
-# an OIDC token. `contents: read` is all the checkout needs; this workflow
-# creates no tags, releases or commits.
+# the OIDC exchange needs it — not here, so nothing else in this file could
+# ever mint an OIDC token. `contents: read` is all the checkout needs; this
+# workflow creates no tags, releases or commits.
 permissions:
   contents: read
 
@@ -85,8 +114,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # Provenance only. See the PROVENANCE note in the header — remove this
-      # together with the --provenance flag if the repository ever goes private.
+      # THE credential. Trusted publishing exchanges the OIDC token this
+      # permission mints for a publish grant; without it there is no way for
+      # this job to authenticate to npm at all, because there is no token to
+      # fall back on. It also carries the automatic provenance attestation.
       id-token: write
     services:
       # Same image and health-check shape as ci.yml, so the DB-backed tests
@@ -116,19 +147,32 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-          cache: npm
-          # Writes the ~/.npmrc that points the scope at public npm and reads
-          # the token from NODE_AUTH_TOKEN. Without this, `npm publish` would
-          # fall back to whatever registry the runner's default .npmrc names.
-          registry-url: https://registry.npmjs.org
+          # Writes the ~/.npmrc that points the scope at public npm. Without
+          # this, `npm publish` would fall back to whatever registry the
+          # runner's default .npmrc names — and the OIDC exchange is with
+          # registry.npmjs.org specifically.
+          registry-url: 'https://registry.npmjs.org'
+          # npm's own trusted-publishing example: "never use caching in release
+          # builds". A cache is a mutable input to an artifact that is about to
+          # become immutable and signed; restoring one would put something
+          # outside this commit into the published tarball's provenance story.
+          package-manager-cache: false
+
+      # The runner's bundled npm can predate trusted publishing entirely, and an
+      # npm that has never heard of OIDC fails at `npm publish` with an
+      # authentication error indistinguishable from a misconfigured publisher.
+      # Upgrade explicitly; the preflight assertion below is what actually
+      # guarantees the floor, this step is only the mechanism.
+      - name: Upgrade npm to a trusted-publishing-capable version
+        run: npm install -g npm@latest
 
       # ───────────────────────────────────────────────────────────────────────
       # Preflight. Everything that can be known BEFORE ~20 minutes of gates
       # runs here, so the classic release mistakes fail in seconds: a tag that
-      # disagrees with package.json, a real publish attempted with no token, a
-      # real publish attempted off a tag.
+      # disagrees with package.json, a real publish attempted off a tag, a
+      # toolchain too old to authenticate, OIDC not actually available.
       # ───────────────────────────────────────────────────────────────────────
-      - name: Preflight — resolve mode, verify tag vs package.json, verify secrets
+      - name: Preflight — toolchain floors, OIDC, tag vs package.json, licence
         id: preflight
         env:
           # Referenced as env, never interpolated into the script body: an
@@ -138,7 +182,6 @@ jobs:
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
-          NPM_TOKEN_PRESENT: ${{ secrets.NPM_TOKEN != '' }}
         run: |
           set -euo pipefail
 
@@ -158,6 +201,37 @@ jobs:
           echo "mode: $([ "${dry_run}" = "true" ] && echo 'DRY RUN' || echo 'PUBLISH')"
 
           fail() { echo "::error::$*"; exit 1; }
+
+          # Numeric semver compare, because `sort -V` is not on every runner and
+          # a string compare puts 11.5.1 below 9.0.0.
+          version_at_least() {
+            node -e '
+              const norm = (s) => String(s).trim().replace(/^v/, "").split("-")[0].split(".").map(Number);
+              const [a, b] = [norm(process.argv[1]), norm(process.argv[2])];
+              for (let i = 0; i < 3; i++) {
+                const x = a[i] || 0, y = b[i] || 0;
+                if (x !== y) { console.log(x > y ? "yes" : "no"); process.exit(0); }
+              }
+              console.log("yes");
+            ' "$1" "$2"
+          }
+
+          # Trusted publishing's hard floors, from docs.npmjs.com/trusted-publishers.
+          # An npm below 11.5.1 has no OIDC support at all and fails at publish
+          # time with an authentication error that reads exactly like a
+          # misconfigured trusted publisher on npmjs.com — hours of looking in
+          # the wrong place. Assert instead.
+          NPM_FLOOR=11.5.1
+          NODE_FLOOR=22.14.0
+          npm_version=$(npm --version)
+          node_version=$(node -p 'process.versions.node')
+          echo "toolchain: npm ${npm_version} (floor ${NPM_FLOOR}), node ${node_version} (floor ${NODE_FLOOR})"
+          if [ "$(version_at_least "${npm_version}" "${NPM_FLOOR}")" != "yes" ]; then
+            fail "npm ${npm_version} is below the trusted-publishing floor of ${NPM_FLOOR}. The 'Upgrade npm' step should have fixed this — check that it ran and succeeded."
+          fi
+          if [ "$(version_at_least "${node_version}" "${NODE_FLOOR}")" != "yes" ]; then
+            fail "Node ${node_version} is below the trusted-publishing floor of ${NODE_FLOOR}. Raise node-version on the setup-node step."
+          fi
 
           # `private: true` was the alternative path (never publish). If it
           # ever comes back, npm refuses with a terse message; say why here.
@@ -201,12 +275,18 @@ jobs:
             echo "no tag on this ref — dry run only, tag/version check skipped"
           fi
 
-          # Fail on a missing token HERE, with a sentence that says what to do,
-          # rather than 20 minutes later as an npm 401 that reads like a
-          # registry outage. A dry run needs no token, which is what lets the
-          # workflow be exercised before the secret exists.
-          if [ "${dry_run}" != "true" ] && [ "${NPM_TOKEN_PRESENT}" != "true" ]; then
-            fail "Repository secret NPM_TOKEN is not set. Create an npm Automation token for an account that owns the @swampratnz scope and add it as the NPM_TOKEN repository secret (Settings → Secrets and variables → Actions). See docs/RELEASING.md."
+          # There is no token to check for — the credential is the OIDC token
+          # `id-token: write` mints, and the runner advertises that it can mint
+          # one by setting ACTIONS_ID_TOKEN_REQUEST_URL. Empty means the
+          # permission is missing (or was narrowed at the org/repo level), and
+          # `npm publish` would then fail 20 minutes from now with an
+          # authentication error that reads like a registry problem. Only the
+          # emptiness of the variables is tested; neither is ever echoed.
+          if [ "${dry_run}" != "true" ]; then
+            if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+              fail "No GitHub OIDC token is available to this job, so trusted publishing cannot authenticate. Check that this job still declares 'permissions: id-token: write' (and that the org/repo has not narrowed workflow permissions). Also confirm the trusted publisher on npmjs.com names organization/user 'swampratnz', repository 'agent-base' and workflow filename 'publish.yml' — the filename alone, with its extension, not a path. See docs/RELEASING.md."
+            fi
+            echo "OIDC token endpoint is available to this job"
           fi
 
           {
@@ -308,28 +388,35 @@ jobs:
         if: steps.preflight.outputs.dry_run == 'true'
         run: |
           set -euo pipefail
-          # No --provenance here: see the DRY RUN note in the header. No
-          # NODE_AUTH_TOKEN either — a dry run must not need the secret, or it
-          # could not be used to rehearse a release before the secret exists.
+          # A dry run does not authenticate, so it needs neither the OIDC
+          # exchange nor a configured trusted publisher — which is exactly what
+          # makes it usable today, before the one-time bootstrap publish. What
+          # it therefore does NOT exercise is the authentication itself.
           npm publish --dry-run --access public
-          echo "DRY RUN — nothing was published." >> "$GITHUB_STEP_SUMMARY"
+          echo "DRY RUN — nothing was published, and nothing authenticated." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish
         if: steps.preflight.outputs.dry_run != 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          # --access public: the @swampratnz scope defaults scoped packages to
-          # restricted, and a restricted publish is precisely the auth-required
-          # install this whole decision exists to avoid. publishConfig says the
-          # same thing; both, because either one alone is a single point of
-          # silent failure.
-          npm publish --access public --provenance
+          # No env: block, and that is the point — there is no NODE_AUTH_TOKEN
+          # and no NPM_TOKEN. npm exchanges the job's OIDC token (from the
+          # job-level `id-token: write`) for a publish grant that npmjs has
+          # pre-authorised for this repository and this workflow FILENAME.
+          #
+          # No --provenance either: trusted publishing generates and publishes
+          # the provenance attestation automatically, so the flag is redundant.
+          #
+          # --access public stays: the @swampratnz scope defaults scoped
+          # packages to restricted, and a restricted publish is precisely the
+          # auth-required install this whole decision exists to avoid.
+          # publishConfig says the same thing; both, because either one alone is
+          # a single point of silent failure.
+          npm publish --access public
           {
             echo "### Published"
             echo
-            echo "\`${{ steps.preflight.outputs.name }}@${{ steps.preflight.outputs.version }}\` is on https://registry.npmjs.org with build provenance."
+            echo "\`${{ steps.preflight.outputs.name }}@${{ steps.preflight.outputs.version }}\` is on https://registry.npmjs.org, published via trusted publishing (no token involved) with an automatic provenance attestation."
             echo
             echo "Verify: \`npm view ${{ steps.preflight.outputs.name }}@${{ steps.preflight.outputs.version }}\` and \`npm audit signatures\` in a consumer."
           } >> "$GITHUB_STEP_SUMMARY"

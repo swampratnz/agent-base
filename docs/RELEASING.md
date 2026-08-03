@@ -14,8 +14,38 @@ even for a public package. That would put a credential — and a credential
 expiry — between the production deploy host and `npm ci`, i.e. directly in the
 path of a 2am redeploy. Public npm requires no auth on any consumer: a fresh
 box installs the framework with nothing configured, no `.npmrc`, no token.
-Only the _publishing_ side holds a secret, and that side is one GitHub Actions
-workflow.
+
+## How it authenticates: trusted publishing, no token
+
+Releases publish through **trusted publishing** (OIDC). There is **no
+`NPM_TOKEN`, no `NODE_AUTH_TOKEN`, and no npm secret in this repository at
+all** — if you are looking for where the token is configured, that is the
+answer: there isn't one, and there should not be.
+
+Instead, the workflow exchanges a short-lived GitHub OIDC token for a publish
+grant that npm has pre-authorised against this exact **repository** and this
+exact **workflow filename**. npm now warns against long-lived automation tokens
+and steers to this, for the obvious reason: a leaked automation token publishes
+from anywhere, forever, until somebody notices; an OIDC exchange is minted per
+run, expires in minutes, and is useless outside `publish.yml` in this repo.
+
+Three consequences worth internalising:
+
+- **Renaming `publish.yml` breaks publishing** until the setting on npmjs.com
+  is updated to match. The publisher is registered by filename.
+- **Provenance is automatic.** npm generates and publishes the attestation for
+  a trusted-publishing release by default; the workflow deliberately does _not_
+  pass `--provenance`, because it is redundant.
+- **There are hard toolchain floors**: npm CLI **>= 11.5.1** and Node
+  **>= 22.14.0** (<https://docs.npmjs.com/trusted-publishers>). The workflow
+  upgrades npm explicitly and then asserts both, because an older npm has no
+  OIDC support and fails with an authentication error that reads exactly like a
+  misconfigured publisher on npmjs.com.
+
+> **The first release cannot use it.** npm will not let you configure a trusted
+> publisher for a package that does not exist yet, so `v0.1.0` has to be
+> published by hand, once. See
+> [First release (one-time bootstrap)](#first-release-one-time-bootstrap).
 
 The mechanism is [`.github/workflows/publish.yml`](../.github/workflows/publish.yml),
 whose header comment is the authority on what it actually does; this page is
@@ -25,8 +55,9 @@ the procedure around it.
 
 ## Prerequisites (one-time, owner only)
 
-None of these can be done by CI or by an agent, and the workflow refuses to
-publish until they are true. Do them in order.
+None of these can be done by CI or by an agent. Do them in order — and note
+that (4) is blocked until the [bootstrap publish](#first-release-one-time-bootstrap)
+has happened, which is a property of npm, not an oversight here.
 
 ### 1. Licence — done
 
@@ -41,48 +72,126 @@ the declared identifier, on the dry-run path as well as the real one.
 
 ### 2. An npm account that owns the `@swampratnz` scope
 
-`@swampratnz/agent-base` is **not on the registry** — a `GET` of
-`https://registry.npmjs.org/@swampratnz%2Fagent-base` returns 404, so the name
-is free as of this writing.
+`swampratnz` is a **user account**, so `@swampratnz` is that user's personal
+scope and already exists. Publishing a scoped package under it works once you
+are logged in as that user; the scope needs no separate setup.
 
-What could **not** be verified from here (this repo's automation holds no npm
-credentials and must not authenticate): **whether the `@swampratnz` scope
-exists at all**, and if it does, who owns it. Check before the first release:
+`@swampratnz/agent-base` itself is **not on the registry** — an unauthenticated
+`GET` of `https://registry.npmjs.org/@swampratnz%2Fagent-base` returns 404, so
+the name is free as of this writing and the bootstrap publish below is what
+claims it.
 
-- if `swampratnz` is a **user account**, the scope `@swampratnz` is that user's
-  personal scope and already exists — publishing a scoped package under it
-  works once you are logged in as that user;
-- if you want it to be an **organisation** scope instead, create the org at
-  <https://www.npmjs.com/org/create> _before_ the first publish. Converting a
-  user scope to an org scope afterwards is possible but is extra work you would
-  rather not do under release pressure.
+**Keep 2FA enabled** on that account. The old reason to weaken it was CI
+publishing — an interactive OTP prompt cannot be answered by a workflow, which
+is what pushed people to automation tokens and to turning 2FA off for
+publishing. Trusted publishing removes that pressure entirely: the workflow
+never logs in, so 2FA now only ever guards a human at a keyboard, which is
+exactly where you want it.
 
-Either way, the very first publish is the one that claims the name.
+### 3. There is no `NPM_TOKEN` — do not create one
 
-### 3. `NPM_TOKEN` as a repository secret
+This used to be a prerequisite. **It is not any more, and adding one would be a
+step backwards.** The workflow reads no npm secret, and nothing in this
+repository should hold one. If an `NPM_TOKEN` secret already exists here from
+an earlier attempt, delete it: an unused long-lived publish credential is pure
+liability.
 
-Create an **Automation** token (classic) or a **Granular Access** token on the
-npm account that owns the scope:
+The only credential in the release path is the per-run OIDC token GitHub mints
+from the workflow's `id-token: write` permission, and it never leaves the
+runner.
 
-- npmjs.com → your avatar → **Access Tokens** → **Generate New Token**
-- Classic → **Automation**. Automation tokens are the ones that work in CI when
-  the account has 2FA enabled for publishing; a Publish/"read and write" token
-  will prompt for an OTP and fail the job.
-- Granular Access is the tighter option: scope it to
-  `@swampratnz/agent-base` (or the `@swampratnz` scope), permission
-  **Read and write**, and give it an expiry you will actually remember to
-  rotate. Note that a granular token cannot publish a package that does not
-  exist yet unless it is scoped to the whole scope — so for the **first**
-  release, scope it to `@swampratnz`, not to the package name.
+### 4. Configure the trusted publisher — _after_ the bootstrap publish
 
-Then add it to this repository:
+npm cannot configure a trusted publisher for a package that does not exist yet,
+so this step is genuinely blocked until
+[the first release](#first-release-one-time-bootstrap) has happened. It is
+listed here so the ordering is not a surprise.
 
-- **Settings → Secrets and variables → Actions → New repository secret**
-- Name: `NPM_TOKEN` — the workflow reads it as `NODE_AUTH_TOKEN` at the publish
-  step and nowhere else.
+---
 
-The workflow checks the secret is present in preflight and fails with that
-sentence, rather than letting you find out as an npm 401 twenty minutes later.
+## First release (one-time bootstrap)
+
+**Read this before tagging `v0.1.0`.** The very first publish does **not** go
+through the workflow.
+
+npm's trusted-publisher setting lives on a package's own settings page, and the
+npmjs.com UI only offers it for a package that already exists — there is no way
+to pre-authorise a publisher for a name that has never been published
+([npm/cli#8544](https://github.com/npm/cli/issues/8544), open at the time of
+writing). So the sequence is unavoidable: publish `0.1.0` by hand, then
+configure trusted publishing, then never touch a credential again.
+
+A real run of the workflow before that bootstrap will pass every gate and then
+fail at `npm publish`. That is expected, not a defect.
+
+### Step 1 — tag as usual
+
+Do the version bump, PR, merge and tag exactly as
+[Cutting a release](#cutting-a-release) describes. The tag push will start the
+workflow; let it run (it is a free full-gate check of the tagged tree) and
+expect the publish step to fail.
+
+### Step 2 — publish by hand, from a clean checkout of the tag
+
+**Not from your working tree.** `npm publish` packs whatever is on disk, so a
+stray edit, a leftover scratch file or a half-finished branch would be baked
+into an immutable release. Clone fresh and check out the tag:
+
+```bash
+cd "$(mktemp -d)"
+git clone --depth 1 --branch v0.1.0 https://github.com/swampratnz/agent-base.git
+cd agent-base
+
+# sanity: this must print exactly the tag you are releasing
+git describe --exact-match --tags HEAD
+node -p 'require("./package.json").version'
+
+npm ci
+npm run build            # prepublishOnly runs it too; running it here fails earlier
+npm pack --dry-run       # eyeball the file list: dist/, scripts/, LICENSE, 26 *.sql
+
+npm login                # interactive; answer the 2FA prompt
+npm publish --access public
+```
+
+`--access public` is not optional for a first publish: a scoped package
+defaults to **restricted**, and a restricted package is the auth-required
+install this whole registry decision exists to avoid.
+
+This publish will **not** carry a provenance attestation — provenance comes
+from CI, and this one is a laptop. Every subsequent release gets one
+automatically.
+
+Then log the laptop back out, so no long-lived credential lingers:
+
+```bash
+npm logout
+```
+
+### Step 3 — configure the trusted publisher
+
+On <https://www.npmjs.com/package/@swampratnz/agent-base> → **Settings** →
+**Trusted publisher** → GitHub Actions. The fields, exactly:
+
+| Field                     | Value                                                    |
+| ------------------------- | -------------------------------------------------------- |
+| Organization or user      | `swampratnz`                                              |
+| Repository                | `agent-base`                                              |
+| Workflow filename         | `publish.yml`                                             |
+| Environment name          | _leave blank_ (this workflow uses no GitHub environment)   |
+| Allowed actions           | select **`npm publish`**                                  |
+
+The workflow filename is the field people get wrong: it is the **filename
+only, with its extension** — `publish.yml`, **not**
+`.github/workflows/publish.yml`. A path there produces an authentication
+failure on the next release that looks nothing like a naming mistake.
+
+### Step 4 — prove it works
+
+Bump to `0.1.1` (or whatever the next real change warrants) and release it the
+normal way. If it publishes with no token anywhere and the npmjs page shows a
+**Provenance** panel, the bootstrap is complete and this section never applies
+again.
 
 ---
 
@@ -91,12 +200,15 @@ sentence, rather than letting you find out as an npm 401 twenty minutes later.
 ### Step 0 — dry run first
 
 The dry-run path runs **everything**: every gate, the tarball-contents check,
-and `npm publish --dry-run`. It needs no `NPM_TOKEN`, so you can rehearse the
-whole release before the secret exists.
+and `npm publish --dry-run`. It does not authenticate at all, so it works today
+— before the bootstrap publish, and before any trusted publisher exists.
 
 **Actions → Publish to npm → Run workflow**, leave `dry_run` at its default
 (`true`). Read the job summary: it lists the tarball's top-level entries and
 the SQL-fragment count.
+
+What a dry run therefore cannot exercise is the OIDC exchange itself. Only a
+real release does that.
 
 ### Step 1 — bump the version
 
@@ -135,46 +247,68 @@ Pushing the tag is what triggers the publish. There is no other trigger for a
 real publish: a manual run with `dry_run: false` from a branch is rejected,
 because it would publish an untagged tree.
 
-### What the workflow then does
+### Subsequent releases: what the workflow does
 
-In one job, in this order:
+Once the bootstrap is done, that is the whole procedure — bump, commit, tag,
+push. **No token is created, rotated, or entered anywhere**, and nothing else
+is manual.
 
-1. **Preflight** — resolves dry-run vs real; refuses `private: true`; refuses a
-   missing licence; checks the tag shape and that it matches `package.json`;
-   checks `NPM_TOKEN` exists (real publishes only). All of this before any long
-   step, so a mistake costs seconds.
-2. **The full gate** — `typecheck`, `lint`, `format:check`, `context:check`,
+The workflow, in one job, in this order:
+
+1. **Toolchain** — `actions/setup-node` with
+   `registry-url: https://registry.npmjs.org` and `package-manager-cache: false`
+   (npm's own guidance: never cache in a release build), then an explicit
+   `npm install -g npm@latest`.
+2. **Preflight** — asserts npm >= 11.5.1 and Node >= 22.14.0; refuses
+   `private: true`; refuses a missing `license` field _or_ a missing `LICENSE`
+   file; checks the tag shape and that it matches `package.json`; and, for a
+   real publish, checks a GitHub OIDC token is actually available to the job.
+   All of it before any long step, so a mistake costs seconds rather than
+   twenty minutes.
+3. **The full gate** — `typecheck`, `lint`, `format:check`, `context:check`,
    `migrate`, `test` (against the same `pgvector/pgvector:pg16` service
    container CI uses), `test:security`, `build`. A tag can point at any commit,
    including one that never went through a PR, so the gate runs here regardless
    of what CI said on `main`.
-3. **Pack and verify** — packs the tarball and asserts it actually contains
+4. **Pack and verify** — packs the tarball and asserts it actually contains
    `dist/index.js`, `dist/index.d.ts`, `dist/storage/migrate.js`, both gate
    scripts, and **every** `storage/schema/*.sql` fragment. `files` in
    `package.json` is an allowlist, so its failure mode is silent omission; a
    package that installs but cannot migrate is broken in a way no unit test
    sees.
-4. **Publish** — `npm publish --access public --provenance`.
+5. **Publish** — `npm publish --access public`, authenticated by the OIDC
+   exchange. No `env:` block, no token.
 
 ### Provenance
 
-`--provenance` is on. npm records a signed build attestation naming this
-repository, workflow and commit; consumers verify it with
-`npm audit signatures`, and npmjs.com shows a "Provenance" panel on the package
-page.
+Provenance is **automatic** and needs no flag: npm generates and publishes an
+attestation for every trusted-publishing release, naming this repository,
+workflow and commit. Consumers verify it with `npm audit signatures`, and
+npmjs.com shows a **Provenance** panel on the package page.
 
-It works here because **swampratnz/agent-base is a public repository** —
-confirmed against the GitHub API when the workflow was written — which is
-provenance's hard requirement, along with `id-token: write` (granted at the job
-level only) and publishing from a supported CI.
+It requires a **public** source repository, which `swampratnz/agent-base` is —
+confirmed against the GitHub API when the workflow was written — plus
+`id-token: write`, granted at the job level only.
 
-If the repository is ever made **private**, provenance generation fails the
-publish. Remove both the `--provenance` flag and the `id-token: write`
-permission in the same change, and restore them if it goes public again.
+Two honest caveats:
 
-One honest caveat: the **dry-run path does not pass `--provenance`**, because
-an attestation for a tarball that is then discarded proves nothing. So the flag
-itself is first exercised by the first real publish.
+- The **bootstrap publish has no provenance**, because it comes from a laptop
+  rather than CI. Only releases from `0.1.1` onward carry one.
+- The **dry-run path does not authenticate**, so it cannot exercise the OIDC
+  exchange or the attestation. Both are first exercised by the first real
+  workflow publish.
+
+### When a release fails to authenticate
+
+Symptoms are an npm authentication error at the publish step. In order of
+likelihood:
+
+- **The trusted publisher is not configured yet** — see the bootstrap section.
+- **Workflow filename mismatch** — the npmjs setting must read `publish.yml`,
+  the filename alone with its extension, not a path.
+- **`id-token: write` was removed or narrowed**, at the job, the repo, or the
+  org. The preflight catches this one before the gates run.
+- **npm too old** — also caught in preflight, with the version printed.
 
 ---
 
@@ -208,6 +342,11 @@ credentials, something is wrong with `publishConfig.access` — check
 
 **npm versions are immutable.** You cannot re-publish `0.1.0` with different
 contents; the remedy is always a new version.
+
+All three commands below are **human, interactive** operations: trusted
+publishing covers `npm publish` and nothing else, so `deprecate`, `dist-tag`
+and `unpublish` need an `npm login` at a keyboard (2FA prompt included). That
+is the right shape — none of them should ever be reachable from CI.
 
 ### Preferred: deprecate and supersede
 

@@ -134,12 +134,23 @@ then.
 - The publish workflow (`publish.yml`) fires on a `v*.*.*` tag and runs the
   **same gate set as CI** before `npm publish`, because a tag can point at any
   commit — including one no PR ever adjudicated — and an npm version is
-  immutable once published. Keep the two in step when you edit either. It
-  publishes to public npmjs.com with `--provenance`, which requires this
-  repository to stay **public**; if it ever goes private, drop the flag and the
-  `id-token: write` permission together. `workflow_dispatch` defaults to a dry
-  run that exercises everything and needs no secret. Procedure and the
-  owner-only prerequisites: `docs/RELEASING.md`.
+  immutable once published. Keep the two in step when you edit either.
+  It publishes to public npmjs.com by **trusted publishing (OIDC)**: this
+  repository holds **no npm token**, and none should ever be added. Three things
+  follow, all of them easy to break by accident:
+  **(a) do not rename the file** — the trusted publisher on npmjs.com is
+  registered against the literal filename `publish.yml`, so a rename breaks
+  every release until someone updates that setting;
+  **(b) `id-token: write` at job level is the credential** — remove it and there
+  is nothing to fall back on;
+  **(c) provenance is automatic**, so `--provenance` is deliberately not passed,
+  and it needs this repository to stay **public**.
+  Trusted publishing also has hard floors (npm >= 11.5.1, Node >= 22.14.0) which
+  the workflow upgrades toward and then asserts. `workflow_dispatch` defaults to
+  a dry run that exercises everything and authenticates not at all. The FIRST
+  release cannot use any of this — npm will not configure a publisher for a
+  package that does not exist — so `0.1.0` is a one-time manual publish.
+  Procedure, bootstrap and the owner-only prerequisites: `docs/RELEASING.md`.
 
 ## Conventions
 
