@@ -224,6 +224,13 @@ npm version 0.1.0 --no-git-tag-version
 other change, and the tag comes afterwards, off the merged commit. A tag on an
 unmerged commit is how you end up publishing a tree `main` does not have.
 
+Use `npm version` rather than `npm pkg set version` or a hand-edit: it writes
+**`package-lock.json` as well**, and `npm ci` refuses a tree where the two
+disagree. CI will not catch that for you — this job upgrades npm to a
+trusted-publishing-capable version, which enforces the check, while `ci.yml`
+uses the runner's bundled npm, which does not. The publish preflight asserts
+it, so the failure is a one-line message rather than a dead release.
+
 ### Step 2 — merge it
 
 Open the PR, let CI go green, merge to `main`. Nothing publishes yet.
