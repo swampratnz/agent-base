@@ -1,4 +1,4 @@
-import type { CallerContext, Platform, TurnStateBag } from "./types.js";
+import type { CallerContext, Platform, TurnStateBag } from './types.js';
 
 /**
  * A background job registered by a module. The base owns the scheduler:
@@ -20,15 +20,12 @@ export interface JobSpec {
  * budget → serialized turn) is fixed by the base and cannot be reordered or
  * removed by modules; intercepts slot only into the declared stages.
  */
-export type InterceptStage = "afterGate" | "beforeTurn";
+export type InterceptStage = 'afterGate' | 'beforeTurn';
 
 export interface PreTurnIntercept {
   stage: InterceptStage;
   /** Return a reply to short-circuit the turn, or null to continue. */
-  handle(
-    message: IncomingMessageView,
-    caller: CallerContext,
-  ): Promise<string | null>;
+  handle(message: IncomingMessageView, caller: CallerContext): Promise<string | null>;
 }
 
 /** Read-only view of the normalized inbound message given to intercepts. */

@@ -1,4 +1,26 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
-*.log
+
+# Environment / secrets
 .env
+.env.local
+*.pem
+*.key
+
+# Logs
+logs/
+*.log
+
+# Canary workflow scratch: the community-agent checkout the cross-repo build
+# job makes. Untracked so a stray `git add -A` in a local canary reproduction
+# can never commit another repo's tree into this one.
+/.canary/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

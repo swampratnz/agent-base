@@ -1,4 +1,4 @@
-import type { Platform } from "./types.js";
+import type { Platform } from './types.js';
 
 /**
  * Adapter registration: base config names the enabled adapters; each factory
@@ -39,8 +39,8 @@ export interface InboundContentPolicy {
     text: string;
     authorTier: string;
   }): Promise<
-    | { verdict: "allow" }
-    | { verdict: "flag"; reason: string }
-    | { verdict: "act"; action: string; reason: string }
+    | { verdict: 'allow' }
+    | { verdict: 'flag'; reason: string }
+    | { verdict: 'act'; action: string; reason: string }
   >;
 }

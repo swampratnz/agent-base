@@ -1,4 +1,4 @@
-import type { ProvenanceTrust } from "./storage.js";
+import type { ProvenanceTrust } from './storage.js';
 
 /**
  * A document source for the knowledge-store ingest pipeline (llms.txt-style
@@ -39,11 +39,8 @@ export interface DigestSignal {
     sinceIso: string;
   }): Promise<number | readonly string[]>;
   /** Return null to omit the line when there is nothing to report. */
-  renderLine(
-    value: number | readonly string[],
-    trendSuffix: string,
-  ): string | null;
-  trend?: "count" | "pct";
+  renderLine(value: number | readonly string[], trendSuffix: string): string | null;
+  trend?: 'count' | 'pct';
 }
 
 /** A pending-work queue surfaced in review_queue / my_submissions rollups. */
