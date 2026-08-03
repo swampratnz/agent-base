@@ -3,8 +3,8 @@
 // Post-build smoke check for the schema fragments (runs at the end of
 // `npm run build`): dist/storage/schema/ must contain exactly the .sql
 // fragments the compiled manifest lists. `tsc` compiles manifest.ts but never
-// copies .sql files, so the copy step in package.json's build script is what
-// puts them there — and a forgotten or partial copy would otherwise surface
+// copies .sql files, so copy-schema.mjs (the build step before this one) is
+// what puts them there — and a forgotten or partial copy would otherwise surface
 // only when `migrate:prod` crashes on the deploy box with ENOENT (or worse,
 // silently applies a stale fragment left over from a previous build).
 // ---------------------------------------------------------------------------

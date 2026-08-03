@@ -24,11 +24,11 @@
   "scripts": {
     "_comment_prepublishOnly": "Runs on `npm publish` (not on `npm pack`/`npm ci`), so a hand-run publish from a laptop can never ship a stale or missing dist/. The publish workflow builds first anyway — this is the backstop for the path that skips it.",
     "prepublishOnly": "npm run build",
-    "build": "tsc -p tsconfig.json && cp src/storage/schema/*.sql dist/storage/schema/ && node scripts/check-dist-schema.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/copy-schema.mjs && node scripts/check-dist-schema.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && npm run typecheck:tests",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
     "test": "tsx --experimental-test-module-mocks --test tests/*.test.ts",
-    "test:security": "LOG_LEVEL=${LOG_LEVEL:-silent} node scripts/check-security-test-count.mjs",
+    "test:security": "node scripts/check-security-test-count.mjs",
     "test:security:fix": "node scripts/check-security-test-count.mjs --write",
     "context:check": "node scripts/check-context-pack.mjs",
     "context:fix": "node scripts/check-context-pack.mjs --write",
