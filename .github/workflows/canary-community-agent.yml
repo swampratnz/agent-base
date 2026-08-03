@@ -55,6 +55,14 @@ name: Canary — build community-agent against agent-base HEAD
 #
 # Deliberately NOT `continue-on-error`: an always-green canary is worse than no
 # canary. The variable is the off switch; once it is on, failure means failure.
+#
+# The local-tarball mechanism below stays as it is once the package is
+# published (see docs/RELEASING.md). Its whole value is that it works on a
+# commit that was never published — that is what closes the HEAD-vs-registry
+# window. Post-publish it becomes possible to ALSO build the consumer against
+# the published version (a second job, or an input naming a version instead of
+# the tarball), which would catch a packaging fault the local pack cannot see.
+# That is an optional addition, never a replacement for what is here.
 
 on:
   schedule:

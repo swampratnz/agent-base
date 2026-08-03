@@ -18,6 +18,8 @@ Read `README.md`, then:
   community-agent's **real code**, with a contract-vs-code table at the end.
   This is the most useful document in the repo; read it before believing a type.
 - `docs/SECURITY.md` — the runtime invariants and the pipeline threat model.
+- `docs/RELEASING.md` — how a release is cut, and why this package publishes
+  to **public npmjs.com** rather than GitHub Packages.
 - `docs/agents/` — the committed context pack for cold sessions.
 
 ## What is base and what is a module
@@ -129,6 +131,15 @@ then.
   header lists exactly what the consumer-side follow-up must do. Turn the
   variable on in the same change that makes the consumer depend on the
   package.
+- The publish workflow (`publish.yml`) fires on a `v*.*.*` tag and runs the
+  **same gate set as CI** before `npm publish`, because a tag can point at any
+  commit — including one no PR ever adjudicated — and an npm version is
+  immutable once published. Keep the two in step when you edit either. It
+  publishes to public npmjs.com with `--provenance`, which requires this
+  repository to stay **public**; if it ever goes private, drop the flag and the
+  `id-token: write` permission together. `workflow_dispatch` defaults to a dry
+  run that exercises everything and needs no secret. Procedure and the
+  owner-only prerequisites: `docs/RELEASING.md`.
 
 ## Conventions
 

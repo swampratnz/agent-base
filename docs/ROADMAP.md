@@ -61,9 +61,16 @@ timezone, the vendor URL defaults, the community field names) were removed as
 part of the move; and `createAgent({ modules })` was written, so composition is
 an ordered, fail-closed call rather than an import list.
 
+Then the publishing story: `package.json` made publish-ready (`0.1.0`, the
+`files` allowlist verified against a real `npm pack`, `publishConfig` pointed
+at public npm) and a tag-triggered publish workflow that runs the full gate,
+refuses a tag that disagrees with `package.json`, and attaches build
+provenance. Nothing is published yet — see [`RELEASING.md`](RELEASING.md) for
+the owner-only prerequisites that gate the first release.
+
 Still to come: the pipeline as reusable workflows, the consumer-side follow-up
-in community-agent that makes the canary meaningful, and a 0.1.0 tag once it
-is green.
+in community-agent that makes the canary meaningful, and the 0.1.0 tag itself
+once that is green.
 
 ## Contract stability
 
@@ -75,10 +82,22 @@ build against this package before Phase 3 tags a 0.1.0.
 
 ## Phase 0 decisions of record
 
-- **Distribution**: npm package(s) published to GitHub Packages, plus the
+- **Distribution**: npm package(s) published to **public npmjs.com**, plus the
   pipeline as reusable workflows in this repo; per-repo state
   (security-floor manifest, tests-include ratchet, module map, VISION.md,
   theme labels, CI dummy env, governance-path list) stays per-repo.
+
+  _Amended._ This decision originally read "GitHub Packages", and is now
+  **overruled in favour of public npm**. GitHub Packages' npm registry requires
+  an authenticated token to _install_, even for a public package — so every
+  consumer, including the production deploy host, would need a credential (and
+  a credential expiry) sitting in the path of `npm ci`. That is a fragile place
+  for an auth step: the moment it bites is a 2am redeploy. Public npm needs no
+  auth on any consumer at all, and confines the secret to the one publishing
+  workflow. The mechanism is
+  [`.github/workflows/publish.yml`](../.github/workflows/publish.yml); the
+  procedure, and the owner-only prerequisites that gate the first release, are
+  in [`RELEASING.md`](RELEASING.md).
 - **Namespacing**: the MCP server key / `mcp__<ns>__` prefix is a module
   property (`AgentModule.name`), not a hardcoded literal.
 - **DB naming**: physical table names (e.g. `community_users`) are kept for
