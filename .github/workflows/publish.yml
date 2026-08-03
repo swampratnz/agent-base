@@ -173,6 +173,13 @@ jobs:
             fail "package.json has no usable \"license\" field (got: '${license:-<unset>}'). Publishing a public package with no licence terms is an owner decision, not a workflow default: pick an SPDX identifier, add a matching LICENSE file, and set \"license\" in package.json. See docs/RELEASING.md."
           fi
 
+          # The field alone is not the licence: npm ships LICENSE into every
+          # tarball automatically, so a field with no file publishes terms the
+          # consumer cannot actually read.
+          if [ ! -f LICENSE ] && [ ! -f LICENSE.md ] && [ ! -f LICENSE.txt ]; then
+            fail "package.json declares \"license\": \"${license}\" but there is no LICENSE file to ship with it. Add one whose terms match the declared identifier."
+          fi
+
           # THE classic footgun: tag v0.2.0 pushed while package.json still
           # says 0.1.0. npm would happily publish 0.1.0 (or 409 on a version
           # that already exists) and the tag would forever name something else.

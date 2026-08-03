@@ -28,24 +28,16 @@ the procedure around it.
 None of these can be done by CI or by an agent, and the workflow refuses to
 publish until they are true. Do them in order.
 
-### 1. Choose a licence
+### 1. Licence — done
 
-`package.json` has **no `license` field** today, and there is **no `LICENSE`
-file** in the repository. Publishing a public package with no licence terms
-means nobody may legally use it, which is a decision for the owner rather than
-a default a workflow can pick.
+The package is **MIT**: `package.json` carries `"license": "MIT"` and the
+repository root has the matching `LICENSE` file, which `npm pack` includes
+automatically (it does not need to be listed in `files`).
 
-The publish workflow's preflight **fails loudly** when `license` is unset or
-`UNLICENSED`, on the dry-run path as well as the real one — so this is the
-first thing to fix, not something to discover mid-release.
-
-```bash
-npm pkg set license=MIT        # or whichever SPDX identifier you choose
-# …and add the matching LICENSE file at the repo root
-```
-
-`npm pack` includes `LICENSE` automatically; it does not need to be added to
-`files`.
+Nothing to do here unless the terms change. If they ever do, both must move
+together — the publish preflight fails when `license` is unset or
+`UNLICENSED`, and separately when no `LICENSE` file exists to ship alongside
+the declared identifier, on the dry-run path as well as the real one.
 
 ### 2. An npm account that owns the `@swampratnz` scope
 
