@@ -1,0 +1,140 @@
+name: Canary — build community-agent against agent-base HEAD
+
+# The cross-repo versioning mitigation from the extraction plan's risk list.
+#
+# Once the split lands, a base change that community-agent needs becomes
+# publish → bump: two repos, two merges, and a window in which HEAD here is
+# silently incompatible with the only consumer. This job closes that window by
+# building the consumer against THIS commit — no publish, no version bump: the
+# base is packed with `npm pack` and installed into community-agent's tree as a
+# local tarball, then community-agent's own typecheck + test + build run.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# IT WILL NOT PASS UNTIL THE EXTRACTION LANDS, AND THAT IS EXPECTED.
+# ─────────────────────────────────────────────────────────────────────────────
+# community-agent does not depend on @swampratnz/agent-base yet, so today this
+# job proves only that its tree still builds. Rather than let a known-premature
+# check red the repo, the job is gated behind a repository VARIABLE:
+#
+#     Settings → Secrets and variables → Actions → Variables
+#     AGENT_BASE_CANARY_ENABLED = true
+#
+# Unset (the default), the job skips — the workflow stays green and schedulable.
+# Turn it on in the same change that makes community-agent consume this
+# package, and from then on a red canary is a real signal, not noise. A manual
+# run can bypass the gate with the `force` input, which is how you try it out
+# before flipping the variable.
+#
+# Deliberately NOT `continue-on-error`: an always-green canary is worse than no
+# canary. The variable is the off switch; once it is on, failure means failure.
+
+on:
+  schedule:
+    # Daily, well off the hour so it does not pile onto the top-of-hour rush.
+    - cron: '37 14 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Run even if AGENT_BASE_CANARY_ENABLED is not set'
+        type: boolean
+        default: false
+      ref:
+        description: 'community-agent ref to build (default: its default branch)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canary-community-agent
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    if: vars.AGENT_BASE_CANARY_ENABLED == 'true' || inputs.force
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: community_agent_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Placeholder values, not credentials — they exist only to satisfy the
+      # consumer's import-time config schema, exactly as its own CI does. This
+      # block is the thing the extraction plan wants to delete: when the base
+      # owns config and each command validates only the slice it needs, a
+      # cross-repo build stops having to know the consumer's variable names.
+      # Until then, keeping the list here (rather than in a secret) makes it
+      # obvious that nothing real is being handled.
+      CLAUDE_CODE_OAUTH_TOKEN: ci-dummy-token
+      DISCORD_BOT_TOKEN: ci-dummy-token
+      DISCORD_GUILD_ID: ci-dummy-guild
+      WHATSAPP_PROVIDER: disabled
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/community_agent_test
+    steps:
+      - name: Check out agent-base (this commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .canary/base
+          persist-credentials: false
+
+      - name: Check out community-agent
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: swampratnz/community-agent
+          ref: ${{ inputs.ref }}
+          path: .canary/app
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Build and pack agent-base at HEAD
+        working-directory: .canary/base
+        run: |
+          npm ci
+          npm run build
+          npm pack --pack-destination "${RUNNER_TEMP}"
+
+      - name: Install community-agent's dependencies
+        working-directory: .canary/app
+        run: npm ci
+
+      - name: Point community-agent at agent-base HEAD
+        working-directory: .canary/app
+        run: |
+          # --no-save: the override is for this run only, never a commit. Once
+          # the consumer really depends on the package this replaces the
+          # registry copy in node_modules with the tarball built above; until
+          # then it is an unused extra install and the steps below still prove
+          # the consumer's tree is healthy.
+          tarball=$(ls "${RUNNER_TEMP}"/swampratnz-agent-base-*.tgz | head -1)
+          echo "Installing ${tarball}"
+          npm install --no-save "${tarball}"
+
+      - name: community-agent typecheck
+        working-directory: .canary/app
+        run: npm run typecheck
+
+      - name: community-agent migrate
+        working-directory: .canary/app
+        run: npm run migrate
+
+      - name: community-agent test
+        working-directory: .canary/app
+        run: npm test
+
+      - name: community-agent build
+        working-directory: .canary/app
+        run: npm run build
