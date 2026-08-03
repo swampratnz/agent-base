@@ -31,5 +31,10 @@
     // project. noEmit means nothing is written regardless.
     "rootDir": "."
   },
-  "include": ["src/**/*.ts", "tests/moduleApi.test.ts"]
+  "include": [
+    "src/**/*.ts",
+    "tests/contextPack.test.ts",
+    "tests/moduleApi.test.ts",
+    "tests/securityFloorGate.test.ts"
+  ]
 }
