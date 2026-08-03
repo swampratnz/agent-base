@@ -1,0 +1,328 @@
+name: Publish to npm
+
+# Publishes @swampratnz/agent-base to the PUBLIC npmjs.com registry on a
+# version tag.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY npmjs.com AND NOT GITHUB PACKAGES
+# ─────────────────────────────────────────────────────────────────────────────
+# The Phase 0 note in docs/ROADMAP.md originally recorded GitHub Packages. That
+# decision is overruled: GitHub Packages' npm registry requires an
+# authenticated token to INSTALL, even for a public package. That would put a
+# credential — and a credential expiry — between the production deploy host and
+# `npm ci`, i.e. exactly in the path of a 2am redeploy. Public npm needs no auth
+# on any consumer, so a fresh box installs the framework with nothing
+# configured. Publishing is the only side that holds a secret, and that side is
+# this workflow.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHAT IT RUNS
+# ─────────────────────────────────────────────────────────────────────────────
+# The FULL gate set — the union of CI's three jobs — before anything is
+# published. A publish that skipped the gates would ship a package that no
+# check ever adjudicated, and unlike a bad merge it cannot be reverted: npm
+# versions are immutable, and the remedy is a deprecate + a new version (see
+# docs/RELEASING.md). So the gate runs here even though the same commit
+# already passed CI on `main`: a tag can point at any commit, including one
+# that never went through a PR.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# PROVENANCE
+# ─────────────────────────────────────────────────────────────────────────────
+# `--provenance` is ON. npm signs a build attestation naming this repository,
+# workflow and commit, which consumers can verify with `npm audit signatures`.
+# It requires (a) a PUBLIC source repository, (b) publishing from a supported
+# CI, and (c) `id-token: write`. swampratnz/agent-base is public — verified
+# against the GitHub API when this workflow was written — so all three hold. If
+# the repository is ever made private, provenance generation FAILS the publish:
+# drop the `--provenance` flag and the `id-token: write` permission below in
+# the same change, and put them back if it goes public again.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# DRY RUN
+# ─────────────────────────────────────────────────────────────────────────────
+# `workflow_dispatch` defaults to a dry run, and the dry-run path runs
+# EVERYTHING — every gate, the tarball contents check, and
+# `npm publish --dry-run` — so the whole release can be exercised before any
+# version is burned. The one thing it deliberately does not do is
+# `--provenance`: an attestation is only meaningful for an artifact that was
+# actually published, and generating one for a discarded tarball would prove
+# nothing. So the provenance flag itself is first exercised by the first real
+# publish; docs/RELEASING.md says so rather than pretending otherwise.
+#
+# A dry run needs no NPM_TOKEN, which is what lets the workflow be exercised
+# before the secret exists.
+
+on:
+  push:
+    # Only fully-qualified version tags. A `v1.2` or a `release-1.2.3` is not a
+    # release here, and silently publishing one would be worse than not firing.
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run the whole pipeline but stop at `npm publish --dry-run` (nothing is published)'
+        type: boolean
+        default: true
+
+# Least privilege. `id-token: write` is granted at the JOB level only, where
+# provenance needs it — not here, so nothing else in this file could ever mint
+# an OIDC token. `contents: read` is all the checkout needs; this workflow
+# creates no tags, releases or commits.
+permissions:
+  contents: read
+
+# A publish must never be cancelled halfway. Two tags pushed together should
+# queue, not supersede each other — the loser would otherwise never publish and
+# would leave a tag pointing at a version that is not on the registry.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Provenance only. See the PROVENANCE note in the header — remove this
+      # together with the --provenance flag if the repository ever goes private.
+      id-token: write
+    services:
+      # Same image and health-check shape as ci.yml, so the DB-backed tests
+      # behave here exactly as they do there. repository.test.ts alone carries
+      # 117 SECURITY: cases and they are worth strictly more than a skip.
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agent_base_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      # persist-credentials:false for the same reason as ci.yml: no step after
+      # checkout needs a git credential, and this job runs npm lifecycle
+      # scripts, so the job token must not sit readable in .git/config.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          # Writes the ~/.npmrc that points the scope at public npm and reads
+          # the token from NODE_AUTH_TOKEN. Without this, `npm publish` would
+          # fall back to whatever registry the runner's default .npmrc names.
+          registry-url: https://registry.npmjs.org
+
+      # ───────────────────────────────────────────────────────────────────────
+      # Preflight. Everything that can be known BEFORE ~20 minutes of gates
+      # runs here, so the classic release mistakes fail in seconds: a tag that
+      # disagrees with package.json, a real publish attempted with no token, a
+      # real publish attempted off a tag.
+      # ───────────────────────────────────────────────────────────────────────
+      - name: Preflight — resolve mode, verify tag vs package.json, verify secrets
+        id: preflight
+        env:
+          # Referenced as env, never interpolated into the script body: an
+          # input or a ref name is attacker-influenced text and must not become
+          # shell source.
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          NPM_TOKEN_PRESENT: ${{ secrets.NPM_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+
+          # A tag push is always a real publish. A manual run is a dry run
+          # unless the operator explicitly said otherwise.
+          if [ "${EVENT_NAME}" = "push" ]; then
+            dry_run=false
+          elif [ "${INPUT_DRY_RUN}" = "false" ]; then
+            dry_run=false
+          else
+            dry_run=true
+          fi
+
+          version=$(node -p 'require("./package.json").version')
+          name=$(node -p 'require("./package.json").name')
+          echo "package: ${name}@${version}"
+          echo "mode: $([ "${dry_run}" = "true" ] && echo 'DRY RUN' || echo 'PUBLISH')"
+
+          fail() { echo "::error::$*"; exit 1; }
+
+          # `private: true` was the alternative path (never publish). If it
+          # ever comes back, npm refuses with a terse message; say why here.
+          if node -p 'require("./package.json").private === true' | grep -qx true; then
+            fail "package.json sets \"private\": true — this package is not publishable. Remove it, or revert this workflow."
+          fi
+
+          # A public npm package with no license field is published without any
+          # terms at all, which is not a thing this workflow can decide on the
+          # owner's behalf. See docs/RELEASING.md — it is prerequisite #1.
+          license=$(node -p 'require("./package.json").license || ""')
+          if [ -z "${license}" ] || [ "${license}" = "UNLICENSED" ]; then
+            fail "package.json has no usable \"license\" field (got: '${license:-<unset>}'). Publishing a public package with no licence terms is an owner decision, not a workflow default: pick an SPDX identifier, add a matching LICENSE file, and set \"license\" in package.json. See docs/RELEASING.md."
+          fi
+
+          # THE classic footgun: tag v0.2.0 pushed while package.json still
+          # says 0.1.0. npm would happily publish 0.1.0 (or 409 on a version
+          # that already exists) and the tag would forever name something else.
+          if [ "${REF_TYPE}" = "tag" ]; then
+            case "${REF_NAME}" in
+              v[0-9]*.[0-9]*.[0-9]*) : ;;
+              *) fail "Tag '${REF_NAME}' is not a vMAJOR.MINOR.PATCH release tag." ;;
+            esac
+            if [ "${REF_NAME}" != "v${version}" ]; then
+              fail "Tag '${REF_NAME}' does not match package.json version '${version}' (expected tag 'v${version}'). Fix one of the two and re-tag — do not publish a mismatch."
+            fi
+            echo "tag ${REF_NAME} matches package.json version ${version}"
+          elif [ "${dry_run}" != "true" ]; then
+            # Guards a manual dry_run:false launched from a branch, which would
+            # publish an untagged tree under whatever version happens to be in
+            # package.json.
+            fail "A real publish must run from a version tag; this run's ref is '${REF_NAME}' (${REF_TYPE}). Push the tag instead, or re-run with dry_run: true."
+          else
+            echo "no tag on this ref — dry run only, tag/version check skipped"
+          fi
+
+          # Fail on a missing token HERE, with a sentence that says what to do,
+          # rather than 20 minutes later as an npm 401 that reads like a
+          # registry outage. A dry run needs no token, which is what lets the
+          # workflow be exercised before the secret exists.
+          if [ "${dry_run}" != "true" ] && [ "${NPM_TOKEN_PRESENT}" != "true" ]; then
+            fail "Repository secret NPM_TOKEN is not set. Create an npm Automation token for an account that owns the @swampratnz scope and add it as the NPM_TOKEN repository secret (Settings → Secrets and variables → Actions). See docs/RELEASING.md."
+          fi
+
+          {
+            echo "dry_run=${dry_run}"
+            echo "version=${version}"
+            echo "name=${name}"
+          } >> "$GITHUB_OUTPUT"
+
+      - run: npm ci
+
+      # ───────────────────────────────────────────────────────────────────────
+      # The full gate. Same commands as ci.yml's three jobs, in one job here
+      # because a publish is one atomic decision: every check must have passed
+      # on THIS tree before the tarball leaves the runner.
+      # ───────────────────────────────────────────────────────────────────────
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run context:check
+
+      - name: Apply the schema
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/agent_base_test
+        run: npm run migrate
+
+      - name: Test (with a real pgvector database)
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/agent_base_test
+        run: npm test
+
+      # DATABASE_URL is deliberately NOT set on this step, matching ci.yml's
+      # security-invariants job: the gate re-runs every test file in a fresh
+      # process, and pointing it at the database `npm test` has just written
+      # would have it counting rows another run left behind. DB-backed
+      # SECURITY: tests skip cleanly and the count floor treats a skip as a
+      # pass, so the required count is identical either way — and they have
+      # already run for real in the step above.
+      - run: npm run test:security
+
+      - run: npm run build
+
+      # ───────────────────────────────────────────────────────────────────────
+      # What actually ships. `files` in package.json is an allowlist, so the
+      # failure mode is silent omission, not a loud error — and the two
+      # omissions that matter are invisible until a consumer hits them:
+      # no dist/index.js (nothing imports) and no storage/schema/*.sql
+      # (nothing migrates). Assert both against the tarball itself.
+      # ───────────────────────────────────────────────────────────────────────
+      - name: Pack and verify the tarball contents
+        id: pack
+        run: |
+          set -euo pipefail
+          npm pack --pack-destination "${RUNNER_TEMP}" >/dev/null
+          tarball=$(ls "${RUNNER_TEMP}"/swampratnz-agent-base-*.tgz | head -1)
+          echo "tarball: ${tarball}"
+          tar -tzf "${tarball}" | sort > "${RUNNER_TEMP}/tarball-files.txt"
+
+          require() {
+            if ! grep -qx "package/$1" "${RUNNER_TEMP}/tarball-files.txt"; then
+              echo "::error::the packed tarball is missing $1 — check \"files\" in package.json"
+              exit 1
+            fi
+          }
+          require dist/index.js
+          require dist/index.d.ts
+          require dist/storage/schema/manifest.js
+          require dist/storage/migrate.js
+          require scripts/check-security-test-count.mjs
+          require scripts/check-context-pack.mjs
+          require README.md
+
+          # Every fragment the manifest names must be in the tarball, not just
+          # "some .sql files": a partial copy is the exact failure
+          # check-dist-schema.mjs exists to catch, and it would surface
+          # downstream as an ENOENT from migrate:prod on the deploy box.
+          expected=$(ls src/storage/schema/*.sql | wc -l)
+          actual=$(grep -c '^package/dist/storage/schema/.*\.sql$' "${RUNNER_TEMP}/tarball-files.txt")
+          if [ "${expected}" != "${actual}" ]; then
+            echo "::error::tarball has ${actual} schema fragments but src/storage/schema/ has ${expected}"
+            exit 1
+          fi
+          echo "tarball carries ${actual} SQL schema fragments, dist/ and scripts/"
+
+          {
+            echo "### Tarball contents"
+            echo
+            echo "\`$(basename "${tarball}")\` — $(grep -c . "${RUNNER_TEMP}/tarball-files.txt") files, ${actual} SQL schema fragments."
+            echo
+            echo '<details><summary>Top-level entries</summary>'
+            echo
+            echo '```'
+            sed 's|^package/||' "${RUNNER_TEMP}/tarball-files.txt" | cut -d/ -f1 | sort -u
+            echo '```'
+            echo
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish (dry run)
+        if: steps.preflight.outputs.dry_run == 'true'
+        run: |
+          set -euo pipefail
+          # No --provenance here: see the DRY RUN note in the header. No
+          # NODE_AUTH_TOKEN either — a dry run must not need the secret, or it
+          # could not be used to rehearse a release before the secret exists.
+          npm publish --dry-run --access public
+          echo "DRY RUN — nothing was published." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish
+        if: steps.preflight.outputs.dry_run != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # --access public: the @swampratnz scope defaults scoped packages to
+          # restricted, and a restricted publish is precisely the auth-required
+          # install this whole decision exists to avoid. publishConfig says the
+          # same thing; both, because either one alone is a single point of
+          # silent failure.
+          npm publish --access public --provenance
+          {
+            echo "### Published"
+            echo
+            echo "\`${{ steps.preflight.outputs.name }}@${{ steps.preflight.outputs.version }}\` is on https://registry.npmjs.org with build provenance."
+            echo
+            echo "Verify: \`npm view ${{ steps.preflight.outputs.name }}@${{ steps.preflight.outputs.version }}\` and \`npm audit signatures\` in a consumer."
+          } >> "$GITHUB_STEP_SUMMARY"
