@@ -42,3 +42,34 @@ export type {
   SkillsManifest,
 } from './module-api/content.js';
 export type { AgentModule } from './module-api/module.js';
+
+// --- The runtime, lifted from community-agent's src/base/ -------------------
+//
+// The module-API types above stay as the published v0 CONTRACT for the
+// extension points whose runtime has not been lifted yet. Everything below is
+// live code. `createAgent` is the composition entry point; where its
+// `AgentModule` and `module-api/module.ts`'s disagree, createAgent's is what
+// actually runs.
+export {
+  createAgent,
+  planComposition,
+  assertRegistrationsComplete,
+  type Agent,
+  type AgentModule as AgentModuleManifest,
+  type CreateAgentOptions,
+} from './createAgent.js';
+export {
+  BASE_NOTICE_IDS,
+  notice,
+  isRegisteredLanguage,
+  isRegisteredStyle,
+  registerNoticePack,
+  selectNoticeVariant,
+  type NoticeAxes,
+  type NoticeEntry,
+  type NoticeIdMap,
+  type NoticeSelection,
+  type NoticeValue,
+} from './strings/catalogue.js';
+export { migrate, type ModuleMigrationFragment } from './storage/migrate.js';
+export { SCHEMA_FRAGMENTS, loadSchemaSql } from './storage/schema/manifest.js';

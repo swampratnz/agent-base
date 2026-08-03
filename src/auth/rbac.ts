@@ -89,6 +89,11 @@ export function registerToolTiers(tiers: ToolTierRegistration): void {
   SUPER_ADMIN_TOOLS = registered.superAdmin;
 }
 
+/** Readiness probe for createAgent's registration gate — does NOT throw. */
+export function areToolTiersRegistered(): boolean {
+  return registered !== null;
+}
+
 /** The registered tier lists; throws (fails closed) if the tool registry never loaded. */
 function registeredTiers(): ToolTierRegistration {
   if (!registered) {

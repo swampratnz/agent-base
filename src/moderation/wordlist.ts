@@ -23,6 +23,11 @@ export function registerDefaultBadWords(terms: readonly string[]): void {
   registeredDefaults = Object.freeze([...terms]);
 }
 
+/** Readiness probe for createAgent's registration gate — does NOT throw. */
+export function areDefaultBadWordsRegistered(): boolean {
+  return registeredDefaults !== null;
+}
+
 /**
  * The registered defaults. FAILS LOUD rather than degrading to an empty
  * list: an unregistered read means the community module never loaded, and

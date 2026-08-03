@@ -37,7 +37,7 @@ function fixed(id: string): NoticeEntry<NoticeValue> {
 }
 
 /** A template entry: same marker, plus whatever the caller interpolates. */
-function template(id: string, render: (...args: never[]) => string): NoticeEntry<NoticeValue> {
+function template(render: (...args: never[]) => string): NoticeEntry<NoticeValue> {
   return {
     base: render,
     language: { xx: ((...args: never[]) => `xx|${render(...args)}`) as NoticeValue },
@@ -58,7 +58,7 @@ const TEMPLATES: Readonly<Record<string, (...args: never[]) => string>> = {
 };
 
 export const TEST_NOTICE_ENTRIES: Record<string, NoticeEntry<NoticeValue>> = Object.fromEntries(
-  BASE_NOTICE_IDS.map((id) => [id, TEMPLATES[id] ? template(id, TEMPLATES[id]) : fixed(id)]),
+  BASE_NOTICE_IDS.map((id) => [id, TEMPLATES[id] ? template(TEMPLATES[id]) : fixed(id)]),
 );
 
 /** Register the pack. Call once per test process, before anything serves a notice. */

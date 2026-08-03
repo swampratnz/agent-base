@@ -18,12 +18,21 @@
   // in different hunks and merge cleanly (same reasoning as
   // tests/security-floor.json's per-file entries).
   //
-  // The list is currently exhaustive — every test file in the repo is clean.
-  // It stops being exhaustive the first time the extraction pass lands a test
-  // file with a pre-existing error; that is expected and is what the ratchet is
-  // for. (`include` is never left literally empty: tsc errors with "No inputs
-  // were found" and the gate would fail for a reason that has nothing to do
-  // with test types.)
+  // The list stopped being exhaustive when the extraction pass landed, which
+  // is exactly the case the ratchet exists for. Four lifted files carry
+  // pre-existing errors and are deliberately NOT listed:
+  //
+  //   knowledgeScope, usageAlertFailureTracker — their `{ mock: { module } }`
+  //     helper parameter type predates node:test's own
+  //     TestContext['mock']['module'] signature and no longer matches it;
+  //   repository — two unused destructured bindings under noUnusedLocals;
+  //   usageAlert, usageAlertFailureTracker — digest fixtures missing
+  //     `byPlatform`/`costByModel`, i.e. precisely the omitted-field trap the
+  //     header above describes.
+  //
+  // Bringing one to zero and listing it is the unit of progress. (`include` is
+  // never left literally empty: tsc errors with "No inputs were found" and the
+  // gate would fail for a reason that has nothing to do with test types.)
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
@@ -33,8 +42,50 @@
   },
   "include": [
     "src/**/*.ts",
+    "tests/accessRequestRetention.test.ts",
+    "tests/accessRequestRetentionIndependence.test.ts",
+    "tests/ackClassifier.test.ts",
+    "tests/backgroundJobHealth.test.ts",
+    "tests/budgetCheckFailureNotice.test.ts",
+    "tests/configSlices.test.ts",
     "tests/contextPack.test.ts",
+    "tests/crashHandlers.test.ts",
+    "tests/createAgent.test.ts",
+    "tests/dbDegradation.test.ts",
+    "tests/dbPoolTimeouts.test.ts",
+    "tests/discordLink.test.ts",
+    "tests/embeddings.test.ts",
+    "tests/embeddingsDimMismatch.test.ts",
+    "tests/eventTime.test.ts",
+    "tests/gatedNotice.test.ts",
+    "tests/healthState.test.ts",
+    "tests/knowledgeCandidateDedupDegradation.test.ts",
+    "tests/knowledgeDuplicateDegradation.test.ts",
+    "tests/memberId.test.ts",
+    "tests/mergeKnowledgeEmbedCount.test.ts",
+    "tests/moderationRepo.test.ts",
     "tests/moduleApi.test.ts",
-    "tests/securityFloorGate.test.ts"
+    "tests/mutedRoleAlertNotice.test.ts",
+    "tests/noticeCatalogue.test.ts",
+    "tests/notifications.test.ts",
+    "tests/pendingActions.test.ts",
+    "tests/pendingAlertQueue.test.ts",
+    "tests/provenanceTrust.test.ts",
+    "tests/rateReservation.test.ts",
+    "tests/redeploy.test.ts",
+    "tests/replyRetraction.test.ts",
+    "tests/rosterRetention.test.ts",
+    "tests/rosterRetentionIndependence.test.ts",
+    "tests/sanitizeName.test.ts",
+    "tests/schemaConstraintIdempotency.test.ts",
+    "tests/schemaFragmentEquivalence.test.ts",
+    "tests/secrets.test.ts",
+    "tests/securityFloorGate.test.ts",
+    "tests/storageLifecycle.test.ts",
+    "tests/textChunk.test.ts",
+    "tests/voiceTranscribe.test.ts",
+    "tests/whatsappCloudWire.test.ts",
+    "tests/whatsappLidMap.test.ts",
+    "tests/whatsappWire.test.ts"
   ]
 }

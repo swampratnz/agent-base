@@ -3,7 +3,16 @@ import assert from 'node:assert/strict';
 
 const ZONE = 'Pacific/Auckland';
 const LOCALE = 'en-NZ';
-import { formatEventTime } from '../src/util/eventTime.js';
+// eventTime.ts reads DISPLAY_TIMEZONE/DISPLAY_LOCALE defaults off the config
+// singleton, which validates env at import time — provide a dummy environment
+// first, matching the convention in tests/configSlices.test.ts. These tests
+// pass both values explicitly, so the defaults never decide an assertion.
+process.env.CLAUDE_CODE_OAUTH_TOKEN ??= 'test-token';
+process.env.DISCORD_BOT_TOKEN ??= 'test-token';
+process.env.DISCORD_GUILD_ID ??= '1';
+process.env.DATABASE_URL ??= 'postgres://test:test@127.0.0.1:5432/test';
+
+const { formatEventTime } = await import('../src/util/eventTime.js');
 
 // formatEventTime (issue #577): minute-granularity, timezone-aware rendering
 // for event start/end times shown to members and admins. The timezone and

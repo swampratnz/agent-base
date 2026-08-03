@@ -1,3 +1,24 @@
 {
-  "securityFloorGate.test.ts": 8
+  "backgroundJobHealth.test.ts": 1,
+  "createAgent.test.ts": 1,
+  "gatedNotice.test.ts": 1,
+  "healthState.test.ts": 1,
+  "knowledgeCandidateDedupDegradation.test.ts": 1,
+  "knowledgeScope.test.ts": 4,
+  "memberId.test.ts": 3,
+  "moderationRepo.test.ts": 4,
+  "noticeCatalogue.test.ts": 1,
+  "pendingActions.test.ts": 3,
+  "pendingAlertQueue.test.ts": 3,
+  "provenanceTrust.test.ts": 1,
+  "rateReservation.test.ts": 4,
+  "redeploy.test.ts": 2,
+  "repository.test.ts": 117,
+  "sanitizeName.test.ts": 3,
+  "secrets.test.ts": 5,
+  "securityFloorGate.test.ts": 8,
+  "storageLifecycle.test.ts": 1,
+  "whatsappCloudWire.test.ts": 8,
+  "whatsappLidMap.test.ts": 2,
+  "whatsappWire.test.ts": 1
 }
