@@ -38,10 +38,7 @@ test("SQL quarantine predicates keep the fail-closed != 'auto' form — they sta
   // listReleaseWatchUpdatesSince. Rewriting any of them as an enumeration of
   // registered-trusted values would flip the boundary from fail-closed to
   // enumerate-open — see the comment block in src/storage/provenance.ts.
-  const source = readFileSync(
-    new URL('../src/storage/repository/knowledge.ts', import.meta.url),
-    'utf8',
-  );
+  const source = readFileSync(new URL('../src/storage/repository/knowledge.ts', import.meta.url), 'utf8');
   const occurrences = source.match(/AND created_by_role != 'auto'/g) ?? [];
   assert.equal(
     occurrences.length,

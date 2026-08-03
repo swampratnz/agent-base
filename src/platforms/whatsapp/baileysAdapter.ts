@@ -32,10 +32,8 @@ import { atLeast } from '../../auth/rbac.js';
 import { evictReplyMapping, peekReplyMapping } from '../../replyRetraction.js';
 import { transcribeVoiceNote } from '../../media/voiceTranscribe.js';
 import { getLanguagePreference } from '../../storage/repository.js';
-import {
-  VOICE_LANGUAGE_CAVEAT_TEXT_MI,
-  shouldNotify as shouldNotifyVoiceLanguageCaveat,
-} from '../../voiceLanguageCaveatNotice.js';
+import { shouldNotify as shouldNotifyVoiceLanguageCaveat } from '../../voiceLanguageCaveatNotice.js';
+import { notice, isRegisteredLanguage } from '../../strings/catalogue.js';
 import {
   extractAudio,
   extractImage,
@@ -637,7 +635,7 @@ export class BaileysAdapter implements PlatformAdapter {
 
   /**
    * After a successful voice-note transcription, DM the sender a fixed
-   * caveat if their stored language preference is 'mi' (issue #655):
+   * caveat if their stored language preference names a REGISTERED language (issue #655):
    * `WHATSAPP_VOICE_MODEL` is English-only, so their transcript may be
    * garbled with no other signal that anything went wrong. Purely a side
    * notice — never touches `text` or the downstream pipeline. Debounced to
@@ -648,7 +646,7 @@ export class BaileysAdapter implements PlatformAdapter {
   private async maybeSendVoiceLanguageCaveat(senderId: string): Promise<void> {
     if (!isPhoneUserId(senderId)) return;
     const language = await getLanguagePreference('whatsapp', senderId);
-    if (language !== 'mi') return;
+    if (!isRegisteredLanguage(language)) return;
     if (
       !shouldNotifyVoiceLanguageCaveat(
         this.voiceLanguageCaveatNotified.get(senderId),
@@ -660,7 +658,7 @@ export class BaileysAdapter implements PlatformAdapter {
     }
     this.voiceLanguageCaveatNotified.set(senderId, Date.now());
     try {
-      await this.sendDirectMessage(senderId, VOICE_LANGUAGE_CAVEAT_TEXT_MI);
+      await this.sendDirectMessage(senderId, notice('voiceLanguageCaveat', { language }));
     } catch (err) {
       logger.warn({ err }, 'Failed to send voice-language caveat notice');
     }
@@ -982,7 +980,7 @@ export class BaileysAdapter implements PlatformAdapter {
     const welcomeMessage = (await this.textPack.policyText.welcomeMessage()) ?? defaultWelcomeMessage;
     const guidelines = await this.textPack.policyText.guidelines();
     const welcomeText = guidelines
-      ? `${welcomeMessage}\n\nCommunity guidelines:\n${guidelines}`
+      ? `${welcomeMessage}\n\n${notice('guidelinesHeading')}\n${guidelines}`
       : welcomeMessage;
     this.remember(await this.sock.sendMessage(update.id, { text: welcomeText }));
   }
@@ -1226,7 +1224,7 @@ export class BaileysAdapter implements PlatformAdapter {
         // params.language by the `moderate` tool) selects a registered
         // variant when the pack has one; anything else — including no
         // preference at all — keeps the default prefix, byte-identical to
-        // the pre-map `language === 'mi'` branch.
+        // the pre-map single-locale branch.
         const language = paramString(action.params?.language);
         const prefix = this.textPack.warnUserDmPrefixByLanguage?.[language] ?? this.textPack.warnUserDmPrefix;
         await this.sendDirectMessage(

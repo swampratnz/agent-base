@@ -2,7 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { makeAlertSlotReserver } from '../notifications.js';
-import { notice } from '../strings/catalogue.js';
+import { notice, isRegisteredLanguage } from '../strings/catalogue.js';
 import type { Platform } from '../platforms/types.js';
 import {
   recordBackgroundJobCost,
@@ -77,49 +77,20 @@ export interface ModeratorDeps {
    * Standing response-style preference (issue #126), read to pick the
    * plain-language warn/block DM variant (issue #657) — consulted in
    * `scan()` only once `getLanguagePreference` has resolved to something
-   * other than `'mi'` (which takes precedence), mirroring `router.ts`'s
-   * `getRespStyle` usage exactly.
+   * that is NOT a registered language axis value (a registered language
+   * takes precedence), mirroring `router.ts`'s `getRespStyle` usage exactly.
    */
   getResponseStyle: (platform: Platform, userId: string) => Promise<ResponseStyle>;
   store: ModerationStore;
   enforcer: ModerationEnforcer;
 }
 
-// The warn/block DM texts live in the strings catalogue (agent-base plan
-// item 6, `strings/notices.ts` entries `warnDm`/`blockedDm`/`mutedRoleNote`);
-// these derived consts keep every existing import site and pinned test value
-// byte-identical.
-
-export const warnDmText = notice('warnDm');
-
-// Fixed, human-authored te reo Māori variant (issue #333), served instead of
-// warnDmText to a member with a standing 'mi' language_prefs row
-// (getLanguagePreference, issue #189) — same trust level as warnDmText: no
-// model call, no translation, no injection surface. Mirrors the
-// pauseNotice.ts/rateLimitNotice.ts/dailyBudgetNotice.ts `_MI` pattern
-// (issue #300).
-export const warnDmTextMi = notice('warnDm', { language: 'mi' });
-
-// Fixed, human-authored plain-language variant (issue #657, extending #430's
-// _PLAIN pattern to this file), served instead of warnDmText to a member
-// with a standing 'plain' response-style preference (getResponseStyle, issue
-// #126) whose language preference is NOT 'mi' — 'mi' takes precedence over
-// 'plain'. Same trust level as warnDmText: no model call, no translation, no
-// injection surface.
-export const warnDmTextPlain = notice('warnDm', { style: 'plain' });
-
-export const blockedDmText = notice('blockedDm');
-
-// Fixed, human-authored te reo Māori variant (issue #333) of blockedDmText,
-// same pattern/trust level as warnDmTextMi above.
-export const blockedDmTextMi = notice('blockedDm', { language: 'mi' });
-
-// Fixed, human-authored plain-language variant (issue #657) of
-// blockedDmText, same pattern/trust level as warnDmTextPlain above. Reuses
-// the base MUTED_ROLE_NOTE shell (not a separate _PLAIN constant) since that
-// shell is already short/plain by construction — the same reasoning #430
-// used to skip a _PLAIN counterpart for CANCEL_TEXT.
-export const blockedDmTextPlain = notice('blockedDm', { style: 'plain' });
+// The warn/block DM texts are served from the strings catalogue at their
+// call sites (`notice('warnDm'|'blockedDm', { language, style })` in
+// `scan()` below), with the target's standing preferences passed RAW. There
+// are deliberately no module-scope `warnDmTextMi`/`_Plain` derivations: they
+// named a locale, and rendering a notice at import time would make importing
+// this module throw before a pack has been registered.
 
 /**
  * Public, in-channel warning shown where the message was posted. Deliberately
@@ -244,12 +215,12 @@ export class Moderator {
     // as getLanguagePreference's own internal catch — so a language-lookup
     // failure can never skip or delay the enforcement side effects below.
     const lang = await this.deps.getLanguagePreference(ctx.platform, ctx.userId).catch(() => 'auto' as const);
-    // Only consulted once 'mi' is ruled out (it takes precedence) — same
-    // nested-lookup shape router.ts uses at its own getRespStyle call sites
-    // (issue #430). Degrades to 'standard' (English) on any lookup failure,
-    // same #52 invariant as the language lookup above.
+    // Only consulted once a REGISTERED language is ruled out (one takes
+    // precedence) — same nested-lookup shape router.ts uses at its own
+    // getRespStyle call sites (issue #430). Degrades to 'standard' on any
+    // lookup failure, same #52 invariant as the language lookup above.
     let style: ResponseStyle = 'standard';
-    if (lang !== 'mi') {
+    if (!isRegisteredLanguage(lang)) {
       style = await this.deps.getResponseStyle(ctx.platform, ctx.userId).catch(() => 'standard' as const);
     }
 

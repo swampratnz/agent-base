@@ -1,25 +1,15 @@
 /**
- * Static caveat DM sent to a WhatsApp voice-note sender whose stored language
- * preference is 'mi' (issue #655): `WHATSAPP_VOICE_MODEL` is English-only
- * (docs/SECURITY.md, docs/ARCHITECTURE.md), so their transcript may be
- * garbled with zero other signal that anything went wrong. Mirrors
- * rateLimitNotice.ts's exact convention: a fixed English string plus a fixed,
- * human-authored `_MI` variant — no model call, no translation, no injection
- * surface, since neither is ever built from the transcript or any runtime
- * input.
+ * Debounce for the caveat DM sent to a voice-note sender whose standing
+ * language preference names a REGISTERED language variant (issue #655): the
+ * configured voice model is English-only (docs/SECURITY.md), so their
+ * transcript may be garbled with zero other signal that anything went wrong.
+ *
+ * The TEXT is served from the strings catalogue at each adapter's call site
+ * (`notice('voiceLanguageCaveat', { language })`) — a fixed, human-authored
+ * pack value, never built from the transcript or any runtime input. The
+ * adapters decide WHETHER to send it with `isRegisteredLanguage()`, so base
+ * names no locale; community-agent's `=== 'mi'` check and its
+ * `VOICE_LANGUAGE_CAVEAT_TEXT_MI` constant are both gone.
  */
-
-import { notice } from './strings/catalogue.js';
-
-// The text itself lives in the strings catalogue (agent-base plan item 6);
-// these consts are derived so every existing import site and pinned test
-// value stays byte-identical.
-export const VOICE_LANGUAGE_CAVEAT_TEXT = notice('voiceLanguageCaveat');
-
-// Fixed, human-authored te reo Māori variant (issue #655), served instead of
-// VOICE_LANGUAGE_CAVEAT_TEXT to a sender with a standing 'mi' language_prefs
-// row (getLanguagePreference, issue #189) — same trust level as the English
-// constant: no model call, no translation, no injection surface.
-export const VOICE_LANGUAGE_CAVEAT_TEXT_MI = notice('voiceLanguageCaveat', { language: 'mi' });
 
 export { shouldNotifyAfterWindow as shouldNotify } from './util/noticeDebounce.js';

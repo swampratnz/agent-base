@@ -63,8 +63,15 @@ test('loadConfig: defaults survive the slice split — spot checks across every 
   assert.equal(built.behaviour.dailyReplyLimitPerUser, 50);
   // alerts slice
   assert.equal(built.adminDigest.knowledgeStaleDays, 0);
-  // knowledge slice
-  assert.equal(built.statusCheck.apiUrl, 'https://status.claude.com/api/v2/summary.json');
+  // knowledge slice: the two upstream URLs deliberately have NO default —
+  // a framework must not ship one vendor's endpoint as every agent's
+  // fallback. They are required only when their feature is enabled
+  // (knowledgeRefinements), which the next test pins.
+  assert.equal(built.statusCheck.apiUrl, undefined);
+  assert.equal(built.docsIngest.indexUrl, undefined);
+  // behaviour slice: neutral display defaults, not a deployment's timezone.
+  assert.equal(built.behaviour.displayTimezone, 'UTC');
+  assert.equal(built.behaviour.displayLocale, 'en-GB');
   // log slice (shared with the boot path)
   assert.equal(built.log.level, 'info');
   assert.equal(built.log.pretty, false);
@@ -173,4 +180,42 @@ test('boot decoupling control: the FULL config barrel still fails fast in that s
   assert.notEqual(result.status, 0, 'the full barrel must still demand its required vars');
   assert.doesNotMatch(result.stdout, /BARREL LOADED/);
   assert.match(`${result.stderr}${result.stdout}`, /CLAUDE_CODE_OAUTH_TOKEN/);
+});
+
+// --- Extraction residue: no vendor URL defaults, no pinned timezone ---------
+//
+// community-agent defaulted DOCS_INGEST_INDEX_URL to Anthropic's llms.txt and
+// STATUS_CHECK_API_URL to Anthropic's Statuspage, and pinned Pacific/Auckland
+// in util/nzTime.ts. A framework cannot ship one deployment's endpoints or
+// timezone as everyone's fallback, so the URLs lost their defaults and gained
+// a required-when-enabled refinement, and the timezone/locale became env.
+
+test('loadConfig: enabling a fetcher without its URL is a BOOT error, not a silently no-op job', () => {
+  assert.throws(
+    () => loadConfig({ ...MINIMAL_ENV, DOCS_INGEST_ENABLED: 'true' }),
+    /DOCS_INGEST_INDEX_URL is required when DOCS_INGEST_ENABLED is true/,
+  );
+  assert.throws(
+    () => loadConfig({ ...MINIMAL_ENV, STATUS_CHECK_ENABLED: 'true' }),
+    /STATUS_CHECK_API_URL is required when STATUS_CHECK_ENABLED is true/,
+  );
+  const ok = loadConfig({
+    ...MINIMAL_ENV,
+    DOCS_INGEST_ENABLED: 'true',
+    DOCS_INGEST_INDEX_URL: 'https://docs.example.test/llms.txt',
+    STATUS_CHECK_ENABLED: 'true',
+    STATUS_CHECK_API_URL: 'https://status.example.test/api/v2/summary.json',
+  });
+  assert.equal(ok.docsIngest.indexUrl, 'https://docs.example.test/llms.txt');
+  assert.equal(ok.statusCheck.apiUrl, 'https://status.example.test/api/v2/summary.json');
+});
+
+test('loadConfig: DISPLAY_TIMEZONE/DISPLAY_LOCALE are validated by Intl at boot, not at first render', () => {
+  assert.throws(
+    () => loadConfig({ ...MINIMAL_ENV, DISPLAY_TIMEZONE: 'Middle/Earth' }),
+    /DISPLAY_TIMEZONE must be a valid IANA timezone/,
+  );
+  const nz = loadConfig({ ...MINIMAL_ENV, DISPLAY_TIMEZONE: 'Pacific/Auckland', DISPLAY_LOCALE: 'en-NZ' });
+  assert.equal(nz.behaviour.displayTimezone, 'Pacific/Auckland');
+  assert.equal(nz.behaviour.displayLocale, 'en-NZ');
 });

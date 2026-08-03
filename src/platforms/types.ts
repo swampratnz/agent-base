@@ -115,10 +115,10 @@ export interface OutgoingMessage {
   text: string;
   /**
    * Opaque render-variant hint: the caller's standing language preference,
-   * as an OPEN string (agent-base plan item 6 — no longer a closed `'mi'`
+   * as an OPEN string (agent-base plan item 6 — no longer a closed locale
    * union on the platform contract). Adapters never interpret it; they
    * thread it into `filterOutbound`, where the strings catalogue's
-   * REGISTERED axes (`strings/notices.ts`: `'mi'` today) decide what it
+   * REGISTERED axes (whatever the module's pack declares) decide what it
    * selects — an unregistered value renders the default text. Set only on
    * the router's real-agent-turn main reply (issue #339); every other send
    * path (`sendDirectMessage`, poll question/answers, thread
@@ -130,7 +130,7 @@ export interface OutgoingMessage {
   language?: string;
   /**
    * Opaque render-variant hint for the response-style axis (issue #657),
-   * open on the same terms as `language` above (`'plain'` is the one
+   * open on the same terms as `language` above (a module's styles are the only
    * registered style today). `filterOutbound`/the strings catalogue
    * prioritise a registered `language` over this internally, so a caller
    * with both set is unaffected by the order these two fields are set in.
@@ -184,7 +184,7 @@ export interface AdapterTextPack {
   /**
    * Per-language variants of `warnUserDmPrefix`, keyed by the OPEN language
    * axis the strings catalogue registers (this repo's community pack
-   * registers `'mi'`, issue #618) — base names no locale, so an adapter can
+   * declares, issue #618) — base names no locale, so an adapter can
    * serve a target's standing language preference without knowing which
    * languages exist. A missing key (including no map at all) falls back to
    * `warnUserDmPrefix`, which is exactly the English-default behaviour every

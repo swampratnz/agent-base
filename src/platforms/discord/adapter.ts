@@ -29,16 +29,14 @@ import {
   ChannelType,
 } from 'discord.js';
 import { config } from '../../config.js';
-import { formatNzEventTime } from '../../util/nzTime.js';
+import { formatEventTime } from '../../util/eventTime.js';
 import { logger, hashId } from '../../logger.js';
 import { filterOutbound } from '../../agent/outbound.js';
 import { runtimeSecrets } from '../../agent/secrets.js';
 import { reserveVoiceTranscriptionSlot, reserveImageInputDaily } from '../../agent/rateReservers.js';
 import { transcribeVoiceNote } from '../../media/voiceTranscribe.js';
-import {
-  VOICE_LANGUAGE_CAVEAT_TEXT_MI,
-  shouldNotify as shouldNotifyVoiceLanguageCaveat,
-} from '../../voiceLanguageCaveatNotice.js';
+import { shouldNotify as shouldNotifyVoiceLanguageCaveat } from '../../voiceLanguageCaveatNotice.js';
+import { notice, isRegisteredLanguage } from '../../strings/catalogue.js';
 import { getCodeAnswersPolicy } from '../../storage/policyStore.js';
 import { createModerator, type ModerationEnforcer, type Moderator } from '../../moderation/index.js';
 import { atLeast } from '../../auth/rbac.js';
@@ -670,7 +668,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
 
   /**
    * After a successful voice-message transcription, DM the sender a fixed
-   * caveat if their stored language preference is 'mi' (issue #732, mirrors
+   * caveat if their stored language preference names a REGISTERED language (issue #732, mirrors
    * WhatsApp's #655 notice): `DISCORD_VOICE_MODEL` is English-only, so their
    * transcript may be garbled with no other signal that anything went wrong.
    * Purely a side notice — never touches `text` or the downstream pipeline.
@@ -678,7 +676,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
    */
   private async maybeSendVoiceLanguageCaveat(senderId: string): Promise<void> {
     const language = await getLanguagePreference('discord', senderId);
-    if (language !== 'mi') return;
+    if (!isRegisteredLanguage(language)) return;
     if (
       !shouldNotifyVoiceLanguageCaveat(
         this.voiceLanguageCaveatNotified.get(senderId),
@@ -690,7 +688,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
     }
     this.voiceLanguageCaveatNotified.set(senderId, Date.now());
     try {
-      await this.sendDirectMessage(senderId, VOICE_LANGUAGE_CAVEAT_TEXT_MI);
+      await this.sendDirectMessage(senderId, notice('voiceLanguageCaveat', { language }));
     } catch (err) {
       logger.warn({ err }, 'Failed to send Discord voice-language caveat notice');
     }
@@ -782,7 +780,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
    * WELCOME_MESSAGE default when unset — WELCOME_MESSAGE_OPEN instead when
    * config.rbac.accessMode.discord is 'open' (issue #351), since that mode
    * already lets guests through without admin approval. A rejoining member with a standing
-   * set_language_preference('mi') gets the admin-configured welcome_message_mi
+   * set_language_preference(<registered language>) gets the admin-configured localised welcome
    * variant instead, if one is set (issue #282) — falling back to the
    * default-language welcome unchanged when it isn't. Guidelines (below) stay
    * default-language regardless; only the welcome text itself is mi-aware.
@@ -831,7 +829,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
       welcomeMessageForLanguage ?? (await this.textPack.policyText.welcomeMessage()) ?? defaultWelcomeMessage;
     const guidelines = await this.textPack.policyText.guidelines();
     const welcomeText = guidelines
-      ? `${welcomeMessage}\n\nCommunity guidelines:\n${guidelines}`
+      ? `${welcomeMessage}\n\n${notice('guidelinesHeading')}\n${guidelines}`
       : welcomeMessage;
 
     try {
@@ -1381,7 +1379,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
         // params.language by the `moderate` tool) selects a registered
         // variant when the pack has one; anything else — including no
         // preference at all — keeps the default prefix, byte-identical to
-        // the pre-map `language === 'mi'` branch.
+        // the pre-map single-locale branch.
         const language = paramString(action.params?.language);
         const prefix = this.textPack.warnUserDmPrefixByLanguage?.[language] ?? this.textPack.warnUserDmPrefix;
         await this.sendDirectMessage(action.targetUserId!, `${prefix} ${paramString(action.params?.reason)}`);
@@ -1589,7 +1587,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
                 entityMetadata: { location: await this.filtered(rawLocation) },
               });
             })();
-        return `Created event "${created.name}" starting ${formatNzEventTime(created.scheduledStartAt ?? startTime)}.`;
+        return `Created event "${created.name}" starting ${formatEventTime(created.scheduledStartAt ?? startTime)}.`;
       }
       case 'cancel_event': {
         // The tool layer already validates the event live and its Scheduled

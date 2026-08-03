@@ -4,6 +4,14 @@ import type { EnvRefinement } from './env.js';
 /** Behaviour slice (config.behaviour): runtime knobs on the reply hot path. */
 export const behaviourSlice = {
   // Behaviour
+  // How user-facing timestamps (scheduled events, etc.) are rendered.
+  // community-agent hardcoded `Pacific/Auckland`/`en-NZ` in util/nzTime.ts;
+  // a framework cannot assume a deployment's timezone, so both are env with
+  // neutral defaults and a deployment sets them explicitly. Validated as real
+  // IANA/BCP-47 values at boot by the refinement below, so a typo fails fast
+  // rather than throwing inside a member-facing reply.
+  DISPLAY_TIMEZONE: z.string().min(1).default('UTC'),
+  DISPLAY_LOCALE: z.string().min(1).default('en-GB'),
   MEMORY_TOP_K: z.coerce.number().int().nonnegative().default(6),
   // Cosine-similarity floor for automatic memory recall and remember_search
   // (issue #474), mirroring KNOWLEDGE_SEARCH_RELEVANCE_THRESHOLD's shape but
@@ -227,7 +235,31 @@ const MIN_KNOWLEDGE_LOW_RATED_CAVEAT_MIN_UNHELPFUL = 2;
 
 export type BehaviourEnv = z.infer<z.ZodObject<typeof behaviourSlice>>;
 
+/** Does `Intl` accept this as a real IANA zone / BCP-47 locale? */
+function intlAccepts(fn: () => unknown): boolean {
+  try {
+    fn();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const behaviourRefinements: EnvRefinement<BehaviourEnv>[] = [
+  {
+    check: (e) => intlAccepts(() => new Intl.DateTimeFormat('en', { timeZone: e.DISPLAY_TIMEZONE })),
+    params: {
+      message: 'DISPLAY_TIMEZONE must be a valid IANA timezone (e.g. Pacific/Auckland)',
+      path: ['DISPLAY_TIMEZONE'],
+    },
+  },
+  {
+    check: (e) => intlAccepts(() => new Intl.DateTimeFormat(e.DISPLAY_LOCALE)),
+    params: {
+      message: 'DISPLAY_LOCALE must be a valid BCP-47 locale tag (e.g. en-NZ)',
+      path: ['DISPLAY_LOCALE'],
+    },
+  },
   {
     check: (e) =>
       e.INTERACTION_RETENTION_DAYS === 0 || e.INTERACTION_RETENTION_DAYS >= MIN_INTERACTION_RETENTION_DAYS,

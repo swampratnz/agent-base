@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { EnvRefinement } from './env.js';
 
 /**
  * Knowledge-pipeline slice (config.contextBuilder + config.contextCandidates +
@@ -56,21 +57,26 @@ export const knowledgeSlice = {
     .transform((v) => v === 'true'),
   // Max agentic turns for one topic's web-research call (bounds cost).
   KNOWLEDGE_REFRESH_MAX_TURNS: z.coerce.number().int().positive().max(30).default(10),
-  // Docs ingest: backfill Anthropic's official docs into the knowledge base as
-  // RAG chunks (provenance 'docs'), refreshed ~weekly with a content diff so
-  // only changed sections re-embed. OFF by default. Reads ONE fixed official
-  // source over HTTPS (the llms.txt index → per-page .md); no model in the loop.
+  // Docs ingest: backfill a documentation set into the knowledge base as RAG
+  // chunks (provenance 'docs'), refreshed ~weekly with a content diff so only
+  // changed sections re-embed. OFF by default. Reads ONE configured source
+  // over HTTPS (an llms.txt-style index → per-page .md); no model in the loop.
   DOCS_INGEST_ENABLED: z
     .string()
     .optional()
     .transform((v) => v === 'true'),
-  // The official machine-readable docs index (llms.txt). Fixed default; override
-  // only if Anthropic moves it.
+  // The machine-readable docs index (an llms.txt-style URL). NO DEFAULT: a
+  // framework must not ship one vendor's documentation URL as the fallback
+  // for every agent built on it — community-agent defaulted this to
+  // `https://platform.claude.com/llms.txt`, which is deployment config, not
+  // framework config. Required whenever DOCS_INGEST_ENABLED is on (see
+  // knowledgeRefinements), so the feature fails at boot rather than silently
+  // ingesting nothing.
   DOCS_INGEST_INDEX_URL: z
     .string()
     .url()
     .startsWith('https://', 'DOCS_INGEST_INDEX_URL must be https')
-    .default('https://platform.claude.com/llms.txt'),
+    .optional(),
   // Safety caps so a bloated index can't run away (pages fetched, chunks written).
   DOCS_INGEST_MAX_PAGES: z.coerce.number().int().positive().max(5000).default(2500),
   DOCS_INGEST_MAX_CHUNKS: z.coerce.number().int().positive().max(60000).default(20000),
@@ -133,14 +139,16 @@ export const knowledgeSlice = {
     .string()
     .optional()
     .transform((v) => v === 'true'),
-  // Anthropic's official Statuspage summary endpoint. Fixed default; override
-  // only if Anthropic moves it. Same https-only enforcement as
-  // DOCS_INGEST_INDEX_URL — this is a config default, never user/chat-supplied.
+  // The upstream Statuspage-format summary endpoint. NO DEFAULT, for the same
+  // reason as DOCS_INGEST_INDEX_URL (community-agent defaulted it to
+  // `https://status.claude.com/api/v2/summary.json`). Required whenever
+  // STATUS_CHECK_ENABLED is on. Same https-only enforcement — this is
+  // config, never user/chat-supplied.
   STATUS_CHECK_API_URL: z
     .string()
     .url()
     .startsWith('https://', 'STATUS_CHECK_API_URL must be https')
-    .default('https://status.claude.com/api/v2/summary.json'),
+    .optional(),
   // How often to re-poll. A member's turn only ever reads the in-memory
   // cache — it never triggers a live fetch.
   STATUS_CHECK_POLL_MINUTES: z.coerce.number().int().positive().max(1440).default(5),
@@ -165,3 +173,27 @@ export const knowledgeSlice = {
   CONTEXT_EXPORT_MIN_DISTINCT_USERS: z.coerce.number().int().min(2).default(3),
   CONTEXT_EXPORT_PATH: z.string().default('var/community-context.md'),
 };
+
+type KnowledgeEnv = z.infer<z.ZodObject<typeof knowledgeSlice>>;
+
+/**
+ * Both URLs above are deployment config with no framework-safe default, so
+ * the fail-closed half lives here: turning a fetcher ON without telling it
+ * WHERE to fetch from is a boot error, not a silently no-op background job.
+ */
+export const knowledgeRefinements: EnvRefinement<KnowledgeEnv>[] = [
+  {
+    check: (e) => e.DOCS_INGEST_ENABLED !== true || e.DOCS_INGEST_INDEX_URL !== undefined,
+    params: {
+      message: 'DOCS_INGEST_INDEX_URL is required when DOCS_INGEST_ENABLED is true',
+      path: ['DOCS_INGEST_INDEX_URL'],
+    },
+  },
+  {
+    check: (e) => e.STATUS_CHECK_ENABLED !== true || e.STATUS_CHECK_API_URL !== undefined,
+    params: {
+      message: 'STATUS_CHECK_API_URL is required when STATUS_CHECK_ENABLED is true',
+      path: ['STATUS_CHECK_API_URL'],
+    },
+  },
+];

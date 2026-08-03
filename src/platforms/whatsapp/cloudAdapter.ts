@@ -20,10 +20,8 @@ import {
 import { isSuperAdmin, resolveRole } from '../../auth/roles.js';
 import { atLeast } from '../../auth/rbac.js';
 import { transcribeVoiceNote } from '../../media/voiceTranscribe.js';
-import {
-  shouldNotify as shouldNotifyVoiceLanguageCaveat,
-  VOICE_LANGUAGE_CAVEAT_TEXT_MI,
-} from '../../voiceLanguageCaveatNotice.js';
+import { shouldNotify as shouldNotifyVoiceLanguageCaveat } from '../../voiceLanguageCaveatNotice.js';
+import { notice, isRegisteredLanguage } from '../../strings/catalogue.js';
 import {
   extractMessages,
   isAllowedSender,
@@ -92,7 +90,7 @@ const WINDOW_REOPEN_QUEUE_CAP = 3;
  */
 const SEND_RETRY_MAX_BACKOFF_MS = 5_000;
 /**
- * Debounce window for the te reo Māori voice-transcription caveat DM (issue
+ * Debounce window for the non-default-language voice-transcription caveat DM (issue
  * #655's mechanism, reused unchanged here — see `maybeSendVoiceLanguageCaveat`).
  * Same value as `BaileysAdapter`'s copy.
  */
@@ -185,7 +183,7 @@ export class WhatsAppCloudAdapter implements PlatformAdapter {
   private readonly welcomedThisRun = new Map<string, number>();
 
   /**
-   * Senders already sent the te reo Māori voice-transcription caveat DM
+   * Senders already sent the non-default-language voice-transcription caveat DM
    * (issue #655's mechanism, reused unchanged for Cloud voice — issue #910),
    * keyed to last-sent timestamp. Debounced to at most once per
    * `VOICE_LANGUAGE_CAVEAT_WINDOW_MS`, mirroring `BaileysAdapter`'s own copy.
@@ -525,7 +523,7 @@ export class WhatsAppCloudAdapter implements PlatformAdapter {
 
   /**
    * After a successful voice-note transcription, DM the sender a fixed
-   * caveat if their stored language preference is 'mi' (issue #655's
+   * caveat if their stored language preference names a REGISTERED language (issue #655's
    * mechanism, reused unchanged here — see `BaileysAdapter`'s copy): the
    * transcription model is English-only, so their transcript may be garbled
    * with no other signal that anything went wrong. Purely a side notice —
@@ -537,7 +535,7 @@ export class WhatsAppCloudAdapter implements PlatformAdapter {
    */
   private async maybeSendVoiceLanguageCaveat(senderId: string): Promise<void> {
     const language = await getLanguagePreference('whatsapp', senderId);
-    if (language !== 'mi') return;
+    if (!isRegisteredLanguage(language)) return;
     if (
       !shouldNotifyVoiceLanguageCaveat(
         this.voiceLanguageCaveatNotified.get(senderId),
@@ -549,7 +547,7 @@ export class WhatsAppCloudAdapter implements PlatformAdapter {
     }
     this.voiceLanguageCaveatNotified.set(senderId, Date.now());
     try {
-      await this.sendDirectMessage(senderId, VOICE_LANGUAGE_CAVEAT_TEXT_MI);
+      await this.sendDirectMessage(senderId, notice('voiceLanguageCaveat', { language }));
     } catch (err) {
       logger.warn({ err }, 'Failed to send WhatsApp Cloud voice-language caveat notice');
     }
@@ -712,7 +710,7 @@ export class WhatsAppCloudAdapter implements PlatformAdapter {
       const welcomeMessage = (await this.textPack.policyText.welcomeMessage()) ?? defaultWelcomeMessage;
       const guidelines = await this.textPack.policyText.guidelines();
       const welcomeText = guidelines
-        ? `${welcomeMessage}\n\nCommunity guidelines:\n${guidelines}`
+        ? `${welcomeMessage}\n\n${notice('guidelinesHeading')}\n${guidelines}`
         : welcomeMessage;
       await this.sendText(from, welcomeText);
     } catch (err) {
@@ -1118,7 +1116,7 @@ export class WhatsAppCloudAdapter implements PlatformAdapter {
         // params.language by the `moderate` tool) selects a registered
         // variant when the pack has one; anything else — including no
         // preference at all — keeps the default prefix, byte-identical to
-        // the pre-map `language === 'mi'` branch.
+        // the pre-map single-locale branch.
         const language = paramString(action.params?.language);
         const prefix = this.textPack.warnUserDmPrefixByLanguage?.[language] ?? this.textPack.warnUserDmPrefix;
         await this.sendDirectMessage(

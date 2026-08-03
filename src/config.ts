@@ -6,7 +6,7 @@ import { behaviourRefinements, behaviourSlice } from './config/behaviour.js';
 import { dbSection, dbSlice } from './config/db.js';
 import { discordSlice } from './config/discord.js';
 import { integrationsRefinements, integrationsSlice } from './config/integrations.js';
-import { knowledgeSlice } from './config/knowledge.js';
+import { knowledgeRefinements, knowledgeSlice } from './config/knowledge.js';
 import { llmSlice } from './config/llm.js';
 import { logSection, logSlice } from './config/log.js';
 import { moderationSlice } from './config/moderation.js';
@@ -53,6 +53,7 @@ const sliceRefinements: EnvRefinement<ParsedEnv>[] = [
   ...behaviourRefinements,
   ...alertsRefinements,
   ...integrationsRefinements,
+  ...knowledgeRefinements,
 ];
 
 const EnvSchemaChecked = sliceRefinements
@@ -306,6 +307,8 @@ function buildConfig(env: ParsedEnv) {
       enabled: env.FIND_HELPER_ENABLED ?? false,
     },
     behaviour: {
+      displayTimezone: env.DISPLAY_TIMEZONE,
+      displayLocale: env.DISPLAY_LOCALE,
       memoryTopK: env.MEMORY_TOP_K,
       memoryRelevanceThreshold: env.MEMORY_RELEVANCE_THRESHOLD,
       dailyReplyLimitPerUser: env.DAILY_REPLY_LIMIT_PER_USER,

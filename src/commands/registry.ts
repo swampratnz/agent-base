@@ -31,7 +31,7 @@ import type {
  * Declared HERE, with the mechanism, rather than beside the community
  * handlers that consume it (agent-base plan §Phase-2 Stage 4): the router
  * builds this bag and this file types the handler that takes it, so both
- * ends of the contract are base. The three community-implemented reads are
+ * ends of the contract are base. The three module-implemented reads are
  * spelled as structural signatures rather than `typeof <community export>`
  * — a `typeof` is still a dependency on that module, only at the type level.
  */
@@ -43,12 +43,17 @@ export interface WhatsAppTextCommandDeps {
   searchProjectsFn: typeof searchProjects;
   listRecentProjectsFn: typeof listRecentProjects;
   getLangPref: typeof getLanguagePreference;
-  /** `storage/policies.ts`'s community-guidelines read. */
-  getCommunityGuidelinesFn: () => Promise<string | null>;
-  /** `storage/policies.ts`'s te reo Māori community-guidelines read. */
-  getCommunityGuidelinesMiFn: () => Promise<string | null>;
-  /** `memberDigest.ts`'s digest-body builder. */
-  buildMemberDigestContentFn: () => Promise<string | null>;
+  /** `storage/policies.ts`'s conduct-guidelines read (default language). */
+  getConductGuidelinesFn: () => Promise<string | null>;
+  /**
+   * The same read for a caller whose standing preference names a REGISTERED
+   * language; `null` falls back to `getConductGuidelinesFn`. Named for the
+   * axis, not for a locale — community-agent's field was
+   * `getCommunityGuidelinesMiFn`.
+   */
+  getLocalisedConductGuidelinesFn: () => Promise<string | null>;
+  /** The module's periodic member-digest body builder. */
+  buildDigestContentFn: () => Promise<string | null>;
 }
 
 /**

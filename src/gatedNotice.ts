@@ -1,16 +1,20 @@
 import { sanitizeName } from './util/sanitizeName.js';
-import { notice } from './strings/catalogue.js';
+import { notice, type NoticeSelection } from './strings/catalogue.js';
 import { logger } from './logger.js';
 import type { Platform } from './platforms/types.js';
 import { listAdminDisplayNames as listAdminDisplayNamesReal } from './storage/repository.js';
 
 /**
- * Static fallback (issue #360's baseline, unchanged byte-for-byte from the
- * pre-#360 GATED_NOTICE) — used whenever zero admin display names are
- * resolvable, so a fresh deploy or an admin roster with no stored/rostered
- * name never degrades into an empty-list sentence.
+ * Static fallback (issue #360's baseline) — used whenever zero admin display
+ * names are resolvable, so a fresh deploy or an admin roster with no
+ * stored/rostered name never degrades into an empty-list sentence.
+ *
+ * A FUNCTION, not a module-scope const: base modules must be importable
+ * before a module has registered its notice pack.
  */
-export const GATED_NOTICE = notice('gatedNotice');
+export function staticGatedNotice(selection?: NoticeSelection): string {
+  return notice('gatedNotice', selection);
+}
 
 /**
  * Adversarial-review cap (issue #360 approval): a large admin roster must
@@ -42,46 +46,39 @@ function joinNames(names: string[]): string {
  * newlines into it. A name that sanitizes to empty (e.g. only angle
  * brackets/whitespace) is dropped rather than shown blank. Empty input (or
  * an input that sanitizes to nothing) renders the unchanged static
- * `GATED_NOTICE` (acceptance criterion 3); otherwise the result is capped at
+ * fallback (acceptance criterion 3); otherwise the result is capped at
  * `GATED_NOTICE_MAX_ADMIN_NAMES`.
  */
-export function renderGatedNotice(names: string[]): string {
+export function renderGatedNotice(names: string[], selection?: NoticeSelection): string {
   const sanitized = names.map((name) => sanitizeName(name)).filter((name) => name.length > 0);
-  if (sanitized.length === 0) return GATED_NOTICE;
+  if (sanitized.length === 0) return staticGatedNotice(selection);
   const shown = joinNames(sanitized.slice(0, GATED_NOTICE_MAX_ADMIN_NAMES));
-  return `Kia ora! This assistant is member-only. Ask a community admin — ${shown} — to add you as a member and I can help.`;
+  // The SENTENCE is module content — community-agent's read "Kia ora! This
+  // assistant is member-only. Ask a community admin — … — to add you as a
+  // member and I can help.", which no framework can ship. Base owns the
+  // mechanism (resolve, sanitise, cap, join) and interpolates the joined,
+  // already-sanitised name list into the module's template.
+  return notice('gatedNoticeWithAdmins', selection)(shown);
 }
 
 /**
  * Returning-guest wait clause (issue #591): appended by `router.ts` to
  * whichever English gated-notice variant it settles on (the dynamic
- * admin-naming notice above, or the static `GATED_NOTICE`/`GATED_NOTICE_PLAIN`
- * fallbacks). `waitDays` is `undefined`/`0` on a guest's first-ever addressed
+ * admin-naming notice above, or the static fallback). `waitDays` is `undefined`/`0` on a guest's first-ever addressed
  * message, rendering byte-identical to today; `>= 1` appends a fixed suffix
  * naming the whole-day count. The suffix interpolates only a plain integer —
  * never a name or message content — so it needs no `sanitizeName`-style
  * treatment and carries no injection surface. Wording is deliberately neutral
  * ("on record") rather than "I've let them know": the real-time admin alert
  * (issue #480) is flag-gated and may not have fired for this request, so the
- * clause must stay true regardless of that config. See `appendWaitClauseMi`
- * (issue #716) for the te reo sibling, wired into `router.ts`'s `'mi'` branch.
- * The clause template itself lives in the strings catalogue (agent-base plan
- * item 6); this const is derived so import sites and pinned values stay
- * byte-identical.
+ * clause must stay true regardless of that config. `selection` is passed
+ * through to the catalogue, so a caller with a registered language gets that
+ * language's variant of the clause when the pack has one. The clause
+ * template itself lives in the strings catalogue.
  */
-export const appendWaitClause = notice('gatedWaitClause');
-
-/**
- * Te reo Māori sibling of `appendWaitClause` (issue #716), appended by
- * `router.ts` to `GATED_NOTICE_MI` — the one gated-notice variant #591 left
- * without the returning-guest wait clause. Same shape and same
- * `waitDays === undefined || waitDays < 1` no-op guard as the English
- * function, applied to a fixed, human-authored te reo suffix instead of a
- * machine translation, matching every other `_MI` constant in this codebase.
- * Like `appendWaitClause`, the suffix interpolates only a plain integer day
- * count — no name or message content — so it carries no injection surface.
- */
-export const appendWaitClauseMi = notice('gatedWaitClause', { language: 'mi' });
+export function appendWaitClause(text: string, waitDays?: number, selection?: NoticeSelection): string {
+  return notice('gatedWaitClause', selection)(text, waitDays);
+}
 
 /**
  * Whole-day age of an access request's first-ever message (issue #591),
@@ -114,12 +111,12 @@ export function makeGatedNoticeBuilder(
     listNames?: (platform: Platform) => Promise<string[]>;
     now?: () => number;
   } = {},
-): (platform: Platform) => Promise<string> {
+): (platform: Platform, selection?: NoticeSelection) => Promise<string> {
   const listNames = opts.listNames ?? listAdminDisplayNamesReal;
   const now = opts.now ?? Date.now;
   const cache = new Map<Platform, CacheEntry>();
 
-  return async (platform: Platform): Promise<string> => {
+  return async (platform: Platform, selection?: NoticeSelection): Promise<string> => {
     const hit = cache.get(platform);
     let names: string[];
     if (hit && hit.expires > now()) {
@@ -133,7 +130,7 @@ export function makeGatedNoticeBuilder(
       }
       cache.set(platform, { names, expires: now() + CACHE_TTL_MS });
     }
-    return renderGatedNotice(names);
+    return renderGatedNotice(names, selection);
   };
 }
 

@@ -32,6 +32,4 @@ if (JSON.stringify(onDisk) !== JSON.stringify(listed)) {
   process.exit(1);
 }
 
-console.log(
-  `check-dist-schema: dist/storage/schema/ matches the manifest (${listed.length} fragments).`,
-);
+console.log(`check-dist-schema: dist/storage/schema/ matches the manifest (${listed.length} fragments).`);

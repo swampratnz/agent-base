@@ -23,8 +23,8 @@ import { resolveRole, superAdminIds } from './auth/roles.js';
 import type { IncomingMessage, Platform, PlatformAdapter } from './platforms/types.js';
 import { WindowClosedError } from './platforms/types.js';
 import { sanitizeName } from './util/sanitizeName.js';
-import { INTERNAL_ERROR_REPLY, type runAgentTurn, type AgentReply } from './agent/core.js';
-import { notice } from './strings/catalogue.js';
+import { internalErrorReply, type runAgentTurn, type AgentReply } from './agent/core.js';
+import { notice, isRegisteredLanguage, isRegisteredStyle } from './strings/catalogue.js';
 import {
   cancelPendingAction,
   classifyConfirmReply,
@@ -63,90 +63,29 @@ import { shouldNotifyRateLimited } from './rateLimitNotice.js';
 import { shouldNotifyPaused } from './pauseNotice.js';
 import { shouldNotifyBudgetCheckFailed } from './budgetCheckFailureNotice.js';
 import { makeAlertSlotReserver } from './notifications.js';
-import {
-  appendWaitClause,
-  appendWaitClauseMi,
-  GATED_NOTICE,
-  waitDaysSince,
-  type buildGatedNotice,
-} from './gatedNotice.js';
+import { appendWaitClause, staticGatedNotice, waitDaysSince, type buildGatedNotice } from './gatedNotice.js';
 
-// Fixed, human-authored te reo Māori variant (issue #363), served instead of
-// GATED_NOTICE to a gated guest with a standing 'mi' language_prefs row
-// (getLanguagePreference, issue #189) — e.g. a former member who set the
-// preference before being removed. Same trust level as the English constant:
-// no model call, no translation, no injection surface.
-export const GATED_NOTICE_MI = notice('gatedNotice', { language: 'mi' });
-
-// Fixed, human-authored plain-language variant (issue #430) of the static
-// GATED_NOTICE fallback ONLY — `getGatedNotice`'s dynamic admin-name
-// interpolation (gatedNotice.ts's `renderGatedNotice`) is unchanged; see the
-// gated-notice call site below for how the two are told apart. Served to a
-// gated guest with a standing 'plain' response-style preference
-// (getResponseStyle, issue #126) whose language preference is NOT 'mi' —
-// 'mi' takes precedence over 'plain'.
-export const GATED_NOTICE_PLAIN = notice('gatedNotice', { style: 'plain' });
-
-// The three fixed strings the CONFIRM/CANCEL intercept itself authors (issue
-// #405) — the one deterministic path #300/#363's own sweep of this file
-// missed. Same `_MI` + `getLanguagePreference` pattern as every constant
-// above: no model call, no translation, no injection surface, and `.catch(()
-// => 'auto')` at each call site fails safe to the English default.
-export const CANCEL_TEXT = notice('cancelConfirm');
-export const CANCEL_TEXT_MI = notice('cancelConfirm', { language: 'mi' });
-// Deliberately no CANCEL_TEXT_PLAIN (issue #430): already at the floor of
-// simplicity, so a plain variant would be change for change's sake.
-
-export const PERMISSIONS_CHANGED_TEXT = notice('permissionsChanged');
-export const PERMISSIONS_CHANGED_TEXT_MI = notice('permissionsChanged', { language: 'mi' });
-// Fixed, human-authored plain-language variant (issue #430) — rewords the
-// English constant's passive-voice, negation-first construction into a
-// short, direct statement. Same trust level as the English constant.
-export const PERMISSIONS_CHANGED_TEXT_PLAIN = notice('permissionsChanged', { style: 'plain' });
-
-// Fixed, human-authored te reo Māori substitute for the literal `'Failed: '`
-// shell prefix a CONFIRM-gated `requireConfirm` outcome falls back to on a
-// thrown execute() (issue #490 — closing the one gap #405 named out of
-// scope: "the per-tool requireConfirm outcome/failure strings ... stay out
-// of scope and English-only"). Only this fixed shell is translated; the
-// dynamic `result`/error text after it is untouched, same "translate the
-// shell, not the payload" discipline as CODE_TRUNCATED_NOTE_MI (#339) and
-// every other constant in this file.
-export const FAILED_PREFIX_MI = notice('confirmFailedPrefix', { language: 'mi' });
-
-// Symmetric te reo Māori substitute for the literal `'Done: '` shell prefix
-// a successful `requireConfirm` outcome uses when it returns the shared
-// `` `Done: ${result}` `` template (issue #538 — the named follow-up #490
-// deferred). Same "translate the shell, not the payload" discipline as
-// FAILED_PREFIX_MI above: only this fixed prefix is translated, the dynamic
-// `result` text stays byte-identical to the English case. The ~10
-// requireConfirm tools that return fully bespoke (non-`Done:`) success
-// strings stay English-only — the same scope boundary FAILED_PREFIX_MI
-// already draws for bespoke failure strings.
-export const DONE_PREFIX_MI = notice('confirmDonePrefix', { language: 'mi' });
-
-// Wrapper around the deterministic pending-action notice (issue #405),
-// mirroring the "translate the shell, leave the dynamic payload alone"
-// pattern `agent/outbound.ts`'s CODE_TRUNCATED_NOTE_MI already established
-// for its own interpolated placeholder (issue #339) — `description` is a
-// tool-authored action summary (e.g. "delete knowledge entry #5"), not
-// free-form member text, and is embedded unchanged in both variants. `CONFIRM`
-// and `CANCEL` must stay literal, untranslated tokens in the `_MI` variant:
-// `classifyConfirmReply` matches exactly those strings, so translating them
-// would break the confirm protocol itself.
-export const PENDING_NOTICE = notice('pendingNotice');
-export const PENDING_NOTICE_MI = notice('pendingNotice', { language: 'mi' });
-// Fixed, human-authored plain-language variant (issue #430) — same
-// "translate the shell, leave CONFIRM/CANCEL and `description` literal"
-// treatment as PENDING_NOTICE_MI, but also rewords the meta, abstract
-// parenthetical into something concrete a plain-language reader can act on.
-export const PENDING_NOTICE_PLAIN = notice('pendingNotice', { style: 'plain' });
+// Every member-facing string this router sends is served from the notice
+// catalogue AT THE CALL SITE, via `notice(id, { language, style })` with the
+// caller's standing preferences passed RAW. Base deliberately holds no
+// module-scope `const X_MI = notice(id, { language: 'mi' })` derivations any
+// more: they named a locale (community content in a framework file) and, worse,
+// they rendered text at IMPORT time, which made merely importing the router
+// throw unless a pack had already been registered — unimplementable for a
+// package whose entry point is `createAgent`.
+//
+// Axis precedence (a registered language claims the turn; a registered style
+// applies only when no registered language did) lives in
+// `strings/catalogue.ts` and nowhere else. Where this file needs to know
+// "did the caller's preference name a registered variant?" — to skip a style
+// DB read the language would override anyway — it asks
+// `isRegisteredLanguage()`, never `lang === 'mi'`.
 
 // The five opt-in shortcut-reply strings (ack reply/ackClassifier.ts,
 // knowledge-shortcut suffix #162, guest-knowledge nudge #165, repeat-question
 // prefix #259, repeat-max-turns prefix #306) and their fixed, human-authored
-// te reo Māori variants (issue #435, the closing installment of the #266
-// series) live in the strings catalogue (`strings/notices.ts` entries
+// per-language variants (issue #435, the closing installment of the #266
+// series) live in the strings catalogue (`strings/catalogue.ts` entries
 // `ackReply`/`knowledgeShortcutSuffix`/`guestKnowledgeShortcutNudge`/
 // `repeatShortcutNotice`/`repeatMaxTurnsShortcutNotice`) and are selected at
 // their call sites via `notice(id, { language })`. Same trust level as every
@@ -228,7 +167,7 @@ export async function notifyAccessRequest(
 // MAX_TURNS_REPLY/_MI (see `offerEscalation`), the "yes"-confirmed
 // acknowledgement, and the ESCALATION_RATE_LIMIT_PER_HOUR-exhausted notice
 // (issue #479 acceptance criterion 6) — live in the strings catalogue
-// (`strings/notices.ts` entries `escalationOfferSuffix`/
+// (`strings/catalogue.ts` entries `escalationOfferSuffix`/
 // `escalationConfirmed`/`escalationRateLimited`), selected at their call
 // sites via `notice(id, { language })`.
 
@@ -313,7 +252,7 @@ export type TruncateForEchoFn = (content: string) => string;
 export type PolicyTextFn = () => Promise<string | null>;
 
 /** Builds the periodic member digest body, or null when there is nothing to report. */
-export type BuildMemberDigestContentFn = () => Promise<string | null>;
+export type BuildDigestContentFn = () => Promise<string | null>;
 
 /**
  * The Router's full injectable surface (agent-base plan §Phase-1 item 7) —
@@ -344,7 +283,7 @@ export type BuildMemberDigestContentFn = () => Promise<string | null>;
  *   live DB.
  * - `getRespStyle`: the real standing-response-style read (issue #430),
  *   mirroring `getLangPref` exactly — consulted at the same call sites, but
- *   only when `getLangPref` didn't already resolve to 'mi' (which takes
+ *   only when `getLangPref` didn't already resolve to a registered language (which takes
  *   precedence).
  * - `recordShortcutHit`: the real DB-backed shortcut-hit recorder (issue
  *   #440), fired at each of the four member-facing shortcut short-circuits,
@@ -360,11 +299,11 @@ export type BuildMemberDigestContentFn = () => Promise<string | null>;
  *   fired alongside it from the same intercept.
  * - `markStaleKnowledgeAlertedFn`: the real atomic gate+stamp (issue #701),
  *   consulted from `maybeAlertStaleKnowledge`.
- * - `getCommunityGuidelinesFn`/`getCommunityGuidelinesMiFn`: the real
+ * - `getConductGuidelinesFn`/`getLocalisedConductGuidelinesFn`: the real
  *   TTL-cached policy reads (issue #850), consulted only from the
  *   gated-notice branch while `waitDays` is falsy.
  * - `searchMemberInterestsFn`/`searchProjectsFn`/`listRecentProjectsFn`/
- *   `buildMemberDigestContentFn`: the real repository/digest reads (issue
+ *   `buildDigestContentFn`: the real repository/digest reads (issue
  *   #859), consulted only from `tryWhatsAppTextCommand`'s
  *   `!whois`/`!projects`/`!digest` branches — overridable so the WhatsApp
  *   text-command tests can assert `runTurn` (and therefore `embed()`) is
@@ -418,12 +357,12 @@ export interface RouterDeps {
   recordEscalatedGapFn: typeof recordEscalatedKnowledgeGap;
   markKnowledgeGapsAlertedFn: typeof markKnowledgeGapsAlerted;
   markStaleKnowledgeAlertedFn: typeof markStaleKnowledgeAlerted;
-  getCommunityGuidelinesFn: PolicyTextFn;
-  getCommunityGuidelinesMiFn: PolicyTextFn;
+  getConductGuidelinesFn: PolicyTextFn;
+  getLocalisedConductGuidelinesFn: PolicyTextFn;
   searchMemberInterestsFn: typeof searchMemberInterests;
   searchProjectsFn: typeof searchProjects;
   listRecentProjectsFn: typeof listRecentProjects;
-  buildMemberDigestContentFn: BuildMemberDigestContentFn;
+  buildDigestContentFn: BuildDigestContentFn;
   recentQuestionClustersFn: typeof recentQuestionClusters;
   searchMemberInterestsForSelfFn: typeof searchMemberInterestsForSelf;
   checkKnowledgeConflict: typeof hasKnowledgeConflictForId;
@@ -563,12 +502,12 @@ export class Router {
   private readonly recordEscalatedGapFn: typeof recordEscalatedKnowledgeGap;
   private readonly markKnowledgeGapsAlertedFn: typeof markKnowledgeGapsAlerted;
   private readonly markStaleKnowledgeAlertedFn: typeof markStaleKnowledgeAlerted;
-  private readonly getCommunityGuidelinesFn: PolicyTextFn;
-  private readonly getCommunityGuidelinesMiFn: PolicyTextFn;
+  private readonly getConductGuidelinesFn: PolicyTextFn;
+  private readonly getLocalisedConductGuidelinesFn: PolicyTextFn;
   private readonly searchMemberInterestsFn: typeof searchMemberInterests;
   private readonly searchProjectsFn: typeof searchProjects;
   private readonly listRecentProjectsFn: typeof listRecentProjects;
-  private readonly buildMemberDigestContentFn: BuildMemberDigestContentFn;
+  private readonly buildDigestContentFn: BuildDigestContentFn;
   private readonly recentQuestionClustersFn: typeof recentQuestionClusters;
   private readonly searchMemberInterestsForSelfFn: typeof searchMemberInterestsForSelf;
   private readonly checkKnowledgeConflict: typeof hasKnowledgeConflictForId;
@@ -613,12 +552,12 @@ export class Router {
     this.recordEscalatedGapFn = deps.recordEscalatedGapFn;
     this.markKnowledgeGapsAlertedFn = deps.markKnowledgeGapsAlertedFn;
     this.markStaleKnowledgeAlertedFn = deps.markStaleKnowledgeAlertedFn;
-    this.getCommunityGuidelinesFn = deps.getCommunityGuidelinesFn;
-    this.getCommunityGuidelinesMiFn = deps.getCommunityGuidelinesMiFn;
+    this.getConductGuidelinesFn = deps.getConductGuidelinesFn;
+    this.getLocalisedConductGuidelinesFn = deps.getLocalisedConductGuidelinesFn;
     this.searchMemberInterestsFn = deps.searchMemberInterestsFn;
     this.searchProjectsFn = deps.searchProjectsFn;
     this.listRecentProjectsFn = deps.listRecentProjectsFn;
-    this.buildMemberDigestContentFn = deps.buildMemberDigestContentFn;
+    this.buildDigestContentFn = deps.buildDigestContentFn;
     this.recentQuestionClustersFn = deps.recentQuestionClustersFn;
     this.searchMemberInterestsForSelfFn = deps.searchMemberInterestsForSelfFn;
     this.checkKnowledgeConflict = deps.checkKnowledgeConflict;
@@ -903,9 +842,9 @@ export class Router {
    * for this caller — a repeat failure genuinely re-offers escalation, it
    * doesn't extend a stale one.
    */
-  private offerEscalation(msg: IncomingMessage, failureText: string, isMi: boolean): string {
+  private offerEscalation(msg: IncomingMessage, failureText: string, language?: string): string {
     this.pendingEscalations.set(this.callerKey(msg), { query: msg.text, at: Date.now() });
-    return `${failureText}${notice('escalationOfferSuffix', { language: isMi ? 'mi' : undefined })}`;
+    return `${failureText}${notice('escalationOfferSuffix', { language })}`;
   }
 
   /**
@@ -942,8 +881,8 @@ export class Router {
    * computed from `firstRequestedAtPromise` for the wait clause — no new DB
    * read. Returning guests (`waitDays >= 1`) skip the lookup entirely,
    * rendering byte-identical to today. `mi` selects
-   * `getCommunityGuidelinesMiFn() ?? getCommunityGuidelinesFn()`, the same
-   * fallback order as the `community_guidelines` tool's own 'mi' handling
+   * `getLocalisedConductGuidelinesFn() ?? getConductGuidelinesFn()`, the same
+   * fallback order as a module's own conduct-guidelines tool localisation
    * (`agent/tools.ts`). Guidelines are admin-authored (`set_community_guidelines`,
    * admin tier) and concatenated verbatim, mirroring the welcome message's
    * own concatenation (the platform adapters' join-welcome send paths) —
@@ -952,23 +891,25 @@ export class Router {
    * `getRespStyle` catches on this branch: the guest must still get a reply,
    * never silence.
    */
-  private async appendCommunityGuidelinesIfFirstMessage(
-    notice: string,
+  private async appendConductGuidelinesIfFirstMessage(
+    text: string,
     waitDays: number | undefined,
-    mi: boolean,
+    language?: string,
   ): Promise<string> {
-    if (waitDays) return notice;
+    if (waitDays) return text;
+    const localised = isRegisteredLanguage(language);
     const guidelines = await (
-      mi
-        ? this.getCommunityGuidelinesMiFn().then(
-            async (value) => value ?? (await this.getCommunityGuidelinesFn()),
+      localised
+        ? this.getLocalisedConductGuidelinesFn().then(
+            async (value) => value ?? (await this.getConductGuidelinesFn()),
           )
-        : this.getCommunityGuidelinesFn()
+        : this.getConductGuidelinesFn()
     ).catch((err) => {
-      logger.warn({ err }, 'Community guidelines read failed; sending gated notice without them');
+      logger.warn({ err }, 'Conduct guidelines read failed; sending gated notice without them');
       return null;
     });
-    return guidelines ? `${notice}\n\nCommunity guidelines:\n${guidelines}` : notice;
+    if (!guidelines) return text;
+    return `${text}\n\n${notice('guidelinesHeading', { language })}\n${guidelines}`;
   }
 
   /**
@@ -1239,55 +1180,63 @@ export class Router {
             // guest-knowledge-shortcut-hit branch above, and never on the
             // rate-limited path (the `if (!this.rateLimited(userKey))` guard),
             // so no extra DB read is paid where no gated notice is sent
-            // (issue #363 adversarial review). A standing 'mi' preference
+            // (issue #363 adversarial review). A standing REGISTERED-language preference
             // gets the fixed, human-authored translation (no admin-name
-            // enumeration), plus the te reo wait clause for a returning guest
+            // enumeration), plus that language's wait clause for a returning guest
             // (issue #716); everyone else gets the dynamic, admin-naming
             // English builder (issue #360), which already degrades to the
             // static GATED_NOTICE internally on a DB failure — the extra
             // catch here is defense-in-depth so an injected/future builder
             // can never turn a lookup failure into silence for a gated guest.
             const lang = await this.getLangPref(msg.platform, msg.userId).catch(() => 'auto' as const);
-            let notice: string;
-            if (lang === 'mi') {
-              // Returning-guest wait clause, te reo parity (issue #716):
-              // reuses the same firstRequestedAtPromise already created
-              // above — no new DB round-trip on this branch.
+            let text: string;
+            if (isRegisteredLanguage(lang)) {
+              // A caller whose standing preference names a REGISTERED
+              // language variant gets the pack's fixed, human-authored
+              // translation of the static notice — never the dynamic,
+              // admin-enumerating builder, whose sentence exists in the
+              // default language only (issue #363). Reuses the same
+              // firstRequestedAtPromise created above: no new DB round-trip.
               const firstRequestedAt = await firstRequestedAtPromise;
               const waitDays = firstRequestedAt ? waitDaysSince(firstRequestedAt) : undefined;
-              // Community guidelines (issue #850): appended while waitDays is
+              // Conduct guidelines (issue #850): appended while waitDays is
               // falsy, using the same waitDays value — no new DB read.
-              notice = await this.appendCommunityGuidelinesIfFirstMessage(GATED_NOTICE_MI, waitDays, true);
-              notice = appendWaitClauseMi(notice, waitDays);
+              text = await this.appendConductGuidelinesIfFirstMessage(
+                staticGatedNotice({ language: lang }),
+                waitDays,
+                lang,
+              );
+              text = appendWaitClause(text, waitDays, { language: lang });
             } else {
-              notice = await this.getGatedNotice(msg.platform).catch((err) => {
+              const staticFallback = staticGatedNotice();
+              text = await this.getGatedNotice(msg.platform).catch((err) => {
                 logger.warn({ err }, 'Gated notice builder failed; using the static fallback');
-                return GATED_NOTICE;
+                return staticFallback;
               });
-              // _PLAIN only substitutes for the STATIC fallback (issue #430)
-              // — a dynamic, admin-naming notice is left untouched. The
-              // response-style lookup is deliberately nested inside this
-              // branch so it's never paid on the (far more common) dynamic-
-              // notice path.
-              if (notice === GATED_NOTICE) {
+              // A style variant only substitutes for the STATIC fallback
+              // (issue #430) — a dynamic, admin-naming notice is left
+              // untouched. The response-style lookup is deliberately nested
+              // inside this branch so it's never paid on the (far more
+              // common) dynamic-notice path.
+              if (text === staticFallback) {
                 const style = await this.getRespStyle(msg.platform, msg.userId).catch(
                   () => 'standard' as const,
                 );
-                if (style === 'plain') notice = GATED_NOTICE_PLAIN;
+                if (isRegisteredStyle(style)) text = staticGatedNotice({ style });
               }
               // Returning-guest wait clause (issue #591): this branch (and
-              // the 'mi' branch above, issue #716) awaits
+              // the registered-language branch above, issue #716) awaits
               // firstRequestedAtPromise — an intentional, bounded exception
               // to #480's fire-and-forget default, matching the notice
               // path's existing awaits above.
               const firstRequestedAt = await firstRequestedAtPromise;
               const waitDays = firstRequestedAt ? waitDaysSince(firstRequestedAt) : undefined;
-              // Community guidelines (issue #850): appended while waitDays is
+              // Conduct guidelines (issue #850): appended while waitDays is
               // falsy, using the same waitDays value — no new DB read.
-              notice = await this.appendCommunityGuidelinesIfFirstMessage(notice, waitDays, false);
-              notice = appendWaitClause(notice, waitDays);
+              text = await this.appendConductGuidelinesIfFirstMessage(text, waitDays);
+              text = appendWaitClause(text, waitDays);
             }
-            await this.send(adapter, msg.conversationId, notice).catch((err) =>
+            await this.send(adapter, msg.conversationId, text).catch((err) =>
               logger.warn({ err }, 'Failed to send gated notice'),
             );
           }
@@ -1355,13 +1304,12 @@ export class Router {
         // confirm TTL invalidates the queued action.
         if (!atLeast(role, pending.minTier)) {
           const lang = await this.getLangPref(msg.platform, msg.userId).catch(() => 'auto' as const);
-          // Style is only looked up once 'mi' is ruled out (it takes
-          // precedence), so the 'mi' path pays no style DB read — the
-          // selection itself lives in strings/notices.ts.
-          const style =
-            lang === 'mi'
-              ? undefined
-              : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
+          // Style is only looked up once a REGISTERED language is ruled out (one
+          // takes precedence), so that path pays no style DB read — the
+          // selection itself lives in strings/catalogue.ts.
+          const style = isRegisteredLanguage(lang)
+            ? undefined
+            : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
           outcome = notice('permissionsChanged', { language: lang, style });
         } else {
           try {
@@ -1378,13 +1326,13 @@ export class Router {
           // closing the templated `Failed: `/`Done: ` halves of it).
           if (outcome.startsWith('Failed: ')) {
             const lang = await this.getLangPref(msg.platform, msg.userId).catch(() => 'auto' as const);
-            if (lang === 'mi') {
-              outcome = FAILED_PREFIX_MI + outcome.slice('Failed: '.length);
+            if (isRegisteredLanguage(lang)) {
+              outcome = notice('confirmFailedPrefix', { language: lang }) + outcome.slice('Failed: '.length);
             }
           } else if (outcome.startsWith('Done: ')) {
             const lang = await this.getLangPref(msg.platform, msg.userId).catch(() => 'auto' as const);
-            if (lang === 'mi') {
-              outcome = DONE_PREFIX_MI + outcome.slice('Done: '.length);
+            if (isRegisteredLanguage(lang)) {
+              outcome = notice('confirmDonePrefix', { language: lang }) + outcome.slice('Done: '.length);
             }
           }
         }
@@ -1524,12 +1472,12 @@ export class Router {
         // channel's shed messages never pay a per-message DB read — at most
         // once per PAUSE_NOTIFY_WINDOW_MS per user, same as the send itself.
         const lang = await this.getLangPref(msg.platform, msg.userId).catch(() => 'auto' as const);
-        // Style only looked up once 'mi' is ruled out (it takes precedence) —
-        // no style DB read on the 'mi' path; selection lives in strings/notices.ts.
-        const style =
-          lang === 'mi'
-            ? undefined
-            : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
+        // Style only looked up once a REGISTERED language is ruled out (one
+        // takes precedence) — no style DB read on that path; selection lives
+        // in strings/catalogue.ts.
+        const style = isRegisteredLanguage(lang)
+          ? undefined
+          : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
         await this.send(adapter, msg.conversationId, notice('pauseNotice', { language: lang, style })).catch(
           () => {},
         );
@@ -1553,10 +1501,9 @@ export class Router {
         // per-message DB read to every over-limit message.
         const lang = await this.getLangPref(msg.platform, msg.userId).catch(() => 'auto' as const);
         // Same lazy style lookup as the pause notice above.
-        const style =
-          lang === 'mi'
-            ? undefined
-            : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
+        const style = isRegisteredLanguage(lang)
+          ? undefined
+          : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
         await this.send(
           adapter,
           msg.conversationId,
@@ -1606,10 +1553,9 @@ export class Router {
           // per-message DB read to every over-budget message.
           const lang = await this.getLangPref(msg.platform, msg.userId).catch(() => 'auto' as const);
           // Same lazy style lookup as the pause/rate-limit notices above.
-          const style =
-            lang === 'mi'
-              ? undefined
-              : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
+          const style = isRegisteredLanguage(lang)
+            ? undefined
+            : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
           await this.send(
             adapter,
             msg.conversationId,
@@ -2044,9 +1990,9 @@ export class Router {
       searchProjectsFn: this.searchProjectsFn,
       listRecentProjectsFn: this.listRecentProjectsFn,
       getLangPref: this.getLangPref,
-      getCommunityGuidelinesFn: this.getCommunityGuidelinesFn,
-      getCommunityGuidelinesMiFn: this.getCommunityGuidelinesMiFn,
-      buildMemberDigestContentFn: this.buildMemberDigestContentFn,
+      getConductGuidelinesFn: this.getConductGuidelinesFn,
+      getLocalisedConductGuidelinesFn: this.getLocalisedConductGuidelinesFn,
+      buildDigestContentFn: this.buildDigestContentFn,
     };
     for (const command of registeredCommands()) {
       if (!command.whatsapp) continue;
@@ -2205,7 +2151,7 @@ export class Router {
     const repeatNotice = notice('repeatMaxTurnsShortcutNotice', { language: lang });
     const failure = notice('maxTurnsReply', { language: lang });
     const replyText = config.behaviour.escalationToAdminEnabled
-      ? `${repeatNotice}${this.offerEscalation(msg, failure, lang === 'mi')}`
+      ? `${repeatNotice}${this.offerEscalation(msg, failure, lang)}`
       : `${repeatNotice}${failure}`;
     await this.send(adapter, target, replyText);
     await recordInteraction({
@@ -2418,7 +2364,7 @@ export class Router {
         );
         // Explicit `ok: false` (never rely on the field being absent/falsy —
         // issue #259's repeat-question shortcut reads `reply.ok` directly).
-        reply = { text: INTERNAL_ERROR_REPLY, ok: false };
+        reply = { text: internalErrorReply(), ok: false };
       }
 
       // Real-time admin escalation (issue #479): append the "reply yes"
@@ -2429,7 +2375,7 @@ export class Router {
       // that key off `reply.text`/`reply.ok` stay exactly as before.
       let outboundText =
         config.behaviour.escalationToAdminEnabled && reply.maxTurnsExceeded === true
-          ? this.offerEscalation(msg, reply.text, reply.languagePreference === 'mi')
+          ? this.offerEscalation(msg, reply.text, reply.languagePreference)
           : reply.text;
 
       // Post-turn handler chain (routerIntercepts.ts): the module-registered
@@ -2472,13 +2418,12 @@ export class Router {
           const lastWarned = this.budgetWarned.get(userKey) ?? 0;
           if (Date.now() - lastWarned > 24 * 3_600_000) {
             this.budgetWarned.set(userKey, Date.now());
-            // Style only looked up once 'mi' is ruled out (it takes
-            // precedence) — no style DB read on the 'mi' path; selection
-            // lives in strings/notices.ts.
-            const style =
-              reply.languagePreference === 'mi'
-                ? undefined
-                : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
+            // Style only looked up once a REGISTERED language is ruled out (one
+            // takes precedence) — no style DB read on that path; selection
+            // lives in strings/catalogue.ts.
+            const style = isRegisteredLanguage(reply.languagePreference)
+              ? undefined
+              : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
             outboundText += notice('dailyReplyBudgetWarning', {
               language: reply.languagePreference,
               style,
@@ -2494,16 +2439,16 @@ export class Router {
       // per-tool `requireConfirm` outcome/failure strings (`pending.execute()`
       // and the `Failed: ...` fallback below) — see #405's proposal for why
       // those are out of scope. `reply.responseStyle` is threaded the same
-      // way (issue #657) so a standing 'plain' preference reaches the
+      // way (issue #657) so a standing style preference reaches the
       // outbound code-policy note here too; `filterOutbound`/
-      // `applyCodePolicy` already give `language: 'mi'` precedence over
-      // `style: 'plain'` internally, so passing both unconditionally is safe.
+      // `applyCodePolicy` already give a registered language precedence over
+      // a registered style internally, so passing both raw is safe.
       const sentMessageIds = await this.send(
         adapter,
         target,
         outboundText,
-        reply.languagePreference === 'mi' ? 'mi' : undefined,
-        reply.responseStyle === 'plain' ? 'plain' : undefined,
+        reply.languagePreference,
+        reply.responseStyle,
       );
 
       // Auto-retraction mapping (issue #575): only for a genuine addressed
@@ -2534,13 +2479,12 @@ export class Router {
       const registeredNewPending = Boolean(pending && pending !== priorPending);
       if (pending && registeredNewPending) {
         const lang = await this.getLangPref(msg.platform, msg.userId).catch(() => 'auto' as const);
-        // Style only looked up once 'mi' is ruled out (it takes precedence) —
-        // no style DB read on the 'mi' path; selection lives in
-        // strings/notices.ts.
-        const style =
-          lang === 'mi'
-            ? undefined
-            : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
+        // Style only looked up once a REGISTERED language is ruled out (one
+        // takes precedence) — no style DB read on that path; selection lives
+        // in strings/catalogue.ts.
+        const style = isRegisteredLanguage(lang)
+          ? undefined
+          : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
         const pendingText = notice('pendingNotice', { language: lang, style })(pending.description);
         await this.send(adapter, target, pendingText).catch((err) =>
           logger.warn({ err }, 'Failed to send deterministic pending notice'),

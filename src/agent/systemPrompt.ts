@@ -73,10 +73,14 @@ function roleNote(role: CallerContext['role']): string {
 export interface PromptPolicy {
   /** 'off' = never write code; 'snippets' = short snippets only; 'full' = unrestricted. */
   codeAnswers: 'off' | 'snippets' | 'full';
-  /** The caller's standing reply-style preference (set_response_style). */
-  responseStyle: 'standard' | 'plain';
-  /** The caller's standing reply-language preference (set_language_preference). */
-  languagePreference: 'auto' | 'en' | 'mi';
+  /**
+   * The caller's standing reply-style preference (set_response_style),
+   * passed RAW. Open strings: which values exist is a module's decision, and
+   * the assembler only looks them up in the registered section maps.
+   */
+  responseStyle: string;
+  /** The caller's standing reply-language preference (set_language_preference), raw. */
+  languagePreference: string;
 }
 
 function codePolicyNote(policy: PromptPolicy['codeAnswers']): string {
@@ -93,22 +97,22 @@ function codePolicyNote(policy: PromptPolicy['codeAnswers']): string {
 /**
  * The system prompt's top-level slot order — base-owned and frozen, the
  * prompt-side analogue of routerIntercepts.ts's PRE_TURN_SPINE. Registration
- * (promptSpine.ts) only ever supplies CONTENT for the community slots; there
+ * (promptSpine.ts) only ever supplies CONTENT for the module slots; there
  * is no API that can add a slot, reorder this list, or move the security
  * guidelines below the persona/voice blocks. The `charter` slot's
  * above-the-guidelines position is itself a base decision, pinned (with the
  * whole assembly) by tests/systemPromptByteStability.test.ts.
  */
 export const PROMPT_SLOT_ORDER = Object.freeze([
-  'charter', // registered community section
-  'guidelines', // base security spine + registered community chunks (buildGuidelinesBlock)
+  'charter', // registered module section
+  'guidelines', // base security spine + registered module chunks (buildGuidelinesBlock)
   'persona-voice', // per-turn persona parameter (registered roster, personaRegistry.ts)
   'human-style', // base voice rules
   'context', // base platform/conversation lines + registered date grounding
   'role-note', // base RBAC framing + registered web-search authority domains
   'code-policy', // base, from the caller's policy
-  'response-style', // base, only when the caller opted into 'plain'
-  'language-preference', // base, only when the caller set a standing language
+  'response-style', // base slot; body from the module's responseStyleSections map
+  'language-preference', // base slot; body from the module's languagePreferenceSections map
 ] as const);
 
 type PromptSlot = (typeof PROMPT_SLOT_ORDER)[number];
@@ -131,16 +135,13 @@ export function buildSystemPrompt(
       `Context:\n- Platform: ${caller.platform}\n- Conversation: ${caller.conversationId}\n${sections.dateLine(now)}`,
     'role-note': () => roleNote(caller.role),
     'code-policy': () => codePolicyNote(policy.codeAnswers),
-    // The style/language slot BODIES are registered community prose (the
-    // plain-language jargon policy and the NZ-English/te reo Māori standing
-    // preferences); which slot renders for which policy value stays a base
-    // decision here.
-    'response-style': () => (policy.responseStyle === 'plain' ? sections.plainLanguageStyle : null),
-    'language-preference': () => {
-      if (policy.languagePreference === 'en') return sections.enLanguagePreference;
-      if (policy.languagePreference === 'mi') return sections.miLanguagePreference;
-      return null;
-    },
+    // The style/language slot BODIES are registered module prose, looked up
+    // by the caller's RAW preference value. Base owns the two slots and
+    // their frozen position; it names no style or language value, so a
+    // module with no localisation simply registers empty maps and both slots
+    // render nothing (exactly what 'standard'/'auto' already did).
+    'response-style': () => sections.responseStyleSections[policy.responseStyle] ?? null,
+    'language-preference': () => sections.languagePreferenceSections[policy.languagePreference] ?? null,
   };
   return PROMPT_SLOT_ORDER.map((slot) => renderSlot[slot]())
     .filter((block): block is string => block !== null)

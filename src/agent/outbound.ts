@@ -19,9 +19,9 @@ const SECRET_PATTERNS: RegExp[] = [
 const REDACTED = '[redacted]';
 const SNIPPET_MAX_LINES = 15;
 
-// The code-policy note texts (English base, te reo Māori variant issue #339,
+// The code-policy note texts (default base plus per-axis variants, issue #339,
 // plain-language variant issue #657) live in the strings catalogue
-// (`strings/notices.ts`), which also owns the 'mi'-over-'plain' selection
+// (`strings/catalogue.ts`), which also owns the language-over-style selection
 // precedence the two ternaries here used to encode. Same trust level as
 // before: fixed, human-authored text, no model call, no translation, no
 // injection surface beyond the interpolated line count.
@@ -185,7 +185,7 @@ export function convertMarkdownForWhatsApp(text: string): string {
 export type OutboundPlatform = 'discord' | 'whatsapp';
 
 // `language`/`style` are OPEN strings (agent-base plan item 6): the caller's
-// standing preferences are passed raw, and `strings/notices.ts`'s registered
+// standing preferences are passed raw, and `strings/catalogue.ts`'s registered
 // axes decide what they select — unregistered values mean the default text.
 // The DB-facing preference unions and the set_* tool input enums stay closed
 // (see strings/catalogue.ts's note on that tension).

@@ -6,7 +6,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
-import { notice } from '../strings/catalogue.js';
+import { notice, type NoticeSelection } from '../strings/catalogue.js';
 import { atLeast, toolsForRole, type CallerContext } from '../auth/rbac.js';
 import { superAdminIds } from '../auth/roles.js';
 import type { AdapterLookup, IncomingMessage, Platform, PlatformAdapter } from '../platforms/types.js';
@@ -43,17 +43,7 @@ import {
   withWebSearchDedupLock,
 } from './webSearchGuard.js';
 import { skillsManifest } from './skillsManifest.js';
-import {
-  initialUsageLimitTracker,
-  isUsageLimitFailure,
-  stepUsageLimitTracker,
-  USAGE_LIMIT_REPLY,
-  USAGE_LIMIT_REPLY_ADMIN_NOTIFIED,
-  USAGE_LIMIT_REPLY_MI,
-  USAGE_LIMIT_REPLY_ADMIN_NOTIFIED_MI,
-  USAGE_LIMIT_REPLY_PLAIN,
-  USAGE_LIMIT_REPLY_ADMIN_NOTIFIED_PLAIN,
-} from './upstreamFailure.js';
+import { initialUsageLimitTracker, isUsageLimitFailure, stepUsageLimitTracker } from './upstreamFailure.js';
 
 export interface AgentReply {
   text: string;
@@ -104,7 +94,7 @@ export interface AgentReply {
    * threaded straight from the same `getLanguagePreference` lookup
    * `buildSystemPrompt` already uses — no new DB call. Left `undefined` only
    * when that lookup itself throws (see the try/catch below); a resolved
-   * `'auto'`/`'en'`/`'mi'` is always returned as-is, never coerced. Consumed
+   * the caller's raw stored value is always returned as-is, never coerced. Consumed
    * downstream by the router's main-reply send to pick the `_MI` outbound
    * code-policy note.
    */
@@ -118,7 +108,7 @@ export interface AgentReply {
    * case (see the try/catch above), so there's no "lookup failed" state to
    * preserve. Consumed downstream by the router's main-reply send to pick
    * the `_PLAIN` outbound code-policy note — `filterOutbound`/
-   * `applyCodePolicy` already prioritise a `'mi'` `languagePreference` over
+   * `applyCodePolicy` already prioritise a registered `languagePreference` over
    * this internally, so passing both is safe.
    */
   responseStyle?: ResponseStyle;
@@ -140,11 +130,35 @@ export interface AgentReply {
 }
 
 /**
+ * The notice ids a failed turn can fall back to. A `TurnOutcome` carries the
+ * ID, not the rendered text, so the caller's preferences are applied ONCE at
+ * the end of `runAgentTurn` (see `text` below).
+ *
+ * This replaces the two text-keyed `FALLBACK_REPLY_MI`/`_PLAIN` lookup tables
+ * the community build carried. Those hardcoded the two NZ axis values into
+ * base, and they matched on the rendered English string — so a pack whose
+ * default text collided with a model answer could rewrite it. Threading the
+ * id is both generic and the stricter discipline.
+ */
+export type FallbackNoticeId =
+  | 'internalErrorReply'
+  | 'maxTurnsReply'
+  | 'turnFailedReply'
+  | 'usageLimitReply'
+  | 'usageLimitReplyAdminNotified';
+
+/**
  * User-facing fallback when a turn dies on an internal failure. Shared with
  * the router's pre-send backstop (issue #52) so a DB blip mid-turn produces
  * the same degraded reply as an agent-query failure — never silence.
+ *
+ * A FUNCTION, not a module-scope const: a base module must be importable
+ * before a module has registered its notice pack (`createAgent` registers,
+ * then starts), so nothing here may render text at import time.
  */
-export const INTERNAL_ERROR_REPLY = notice('internalErrorReply');
+export function internalErrorReply(selection?: NoticeSelection): string {
+  return notice('internalErrorReply', selection);
+}
 
 /**
  * User-facing fallback when a turn exhausts `AGENT_MAX_TURNS` without
@@ -152,72 +166,25 @@ export const INTERNAL_ERROR_REPLY = notice('internalErrorReply');
  * can replay the exact same, fixed, content-independent string on a cached
  * hit instead of duplicating it.
  */
-export const MAX_TURNS_REPLY = notice('maxTurnsReply');
+export function maxTurnsReply(selection?: NoticeSelection): string {
+  return notice('maxTurnsReply', selection);
+}
 
-/**
- * User-facing fallback for any other non-success `resultSubtype`. Hoisted
- * from an inline literal (issue #396) so it can gain an `_MI` counterpart
- * like its three siblings above.
- */
-export const TURN_FAILED_REPLY = notice('turnFailedReply');
-
-// Fixed, human-authored te reo Māori variants (issue #396) of the four
-// runAgentTurn failure fallbacks above, served instead of the English
-// constant to a caller with a standing 'mi' language_prefs row
-// (getLanguagePreference, issue #189) — same trust level as the English
-// constants: no model call, no translation, no injection surface. Mirrors
-// the `_MI`-variant pattern established by #266/#282/#300/#331/#363.
-export const INTERNAL_ERROR_REPLY_MI = notice('internalErrorReply', { language: 'mi' });
-
-export const MAX_TURNS_REPLY_MI = notice('maxTurnsReply', { language: 'mi' });
-
-export const TURN_FAILED_REPLY_MI = notice('turnFailedReply', { language: 'mi' });
-
-/**
- * Lookup from an English fallback constant to its `_MI` counterpart, applied
- * to `outcome.text` in `runAgentTurn` just before it becomes `AgentReply.text`
- * (issue #396). Keyed by string value rather than by branch so the mapping
- * stays in one place next to the constants it substitutes.
- */
-const FALLBACK_REPLY_MI: Readonly<Record<string, string>> = {
-  [INTERNAL_ERROR_REPLY]: INTERNAL_ERROR_REPLY_MI,
-  [MAX_TURNS_REPLY]: MAX_TURNS_REPLY_MI,
-  [TURN_FAILED_REPLY]: TURN_FAILED_REPLY_MI,
-  [USAGE_LIMIT_REPLY]: USAGE_LIMIT_REPLY_MI,
-  [USAGE_LIMIT_REPLY_ADMIN_NOTIFIED]: USAGE_LIMIT_REPLY_ADMIN_NOTIFIED_MI,
-};
-
-// Fixed, human-authored plain-language variants (issue #430) of the same
-// four runAgentTurn failure fallbacks, served instead of the English
-// constant to a caller with a standing 'plain' response-style preference
-// (getResponseStyle, issue #126) whose language preference is NOT 'mi' —
-// 'mi' takes precedence over 'plain' (see FALLBACK_REPLY_PLAIN's use below).
-// Same trust level as the English constants: no model call, no translation,
-// no injection surface.
-export const INTERNAL_ERROR_REPLY_PLAIN = notice('internalErrorReply', { style: 'plain' });
-
-export const MAX_TURNS_REPLY_PLAIN = notice('maxTurnsReply', { style: 'plain' });
-
-export const TURN_FAILED_REPLY_PLAIN = notice('turnFailedReply', { style: 'plain' });
-
-/**
- * Lookup from an English fallback constant to its `_PLAIN` counterpart,
- * mirroring `FALLBACK_REPLY_MI` exactly (issue #430) — applied only when
- * `languagePreference !== 'mi'`, so a caller with both preferences set still
- * gets the `_MI` text (acceptance criterion 3).
- */
-const FALLBACK_REPLY_PLAIN: Readonly<Record<string, string>> = {
-  [INTERNAL_ERROR_REPLY]: INTERNAL_ERROR_REPLY_PLAIN,
-  [MAX_TURNS_REPLY]: MAX_TURNS_REPLY_PLAIN,
-  [TURN_FAILED_REPLY]: TURN_FAILED_REPLY_PLAIN,
-  [USAGE_LIMIT_REPLY]: USAGE_LIMIT_REPLY_PLAIN,
-  [USAGE_LIMIT_REPLY_ADMIN_NOTIFIED]: USAGE_LIMIT_REPLY_ADMIN_NOTIFIED_PLAIN,
-};
+/** User-facing fallback for any other non-success `resultSubtype`. */
+export function turnFailedReply(selection?: NoticeSelection): string {
+  return notice('turnFailedReply', selection);
+}
 
 interface TurnOutcome {
   ok: boolean;
   resumeFailed: boolean;
+  /**
+   * The rendered DEFAULT text. On a failure this is the fallback notice's
+   * base variant; `fallbackNoticeId` names which one, so the final
+   * per-caller variant is selected once, below.
+   */
   text: string;
+  fallbackNoticeId?: FallbackNoticeId;
   costUsd?: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
@@ -670,23 +637,18 @@ export async function runAgentTurn(
     );
   }
 
-  // Substitute the 'mi' or 'plain' variant for a fixed failure-fallback
-  // string (issues #396/#430). Gated on `outcome.ok === false` — never on
-  // matching the text itself — so a genuine model answer can never be
-  // rewritten, even in the vanishingly unlikely case its text happened to
-  // coincide with one of these constants (the #259 "threaded, not
-  // string-matched" discipline). 'mi' takes precedence over 'plain' when a
-  // caller has both preferences set (acceptance criterion 3). Falls through
-  // unchanged for any text not in the lookup (e.g. English/'auto'/undefined
-  // language preference with 'standard' response style, or a value that
-  // isn't one of the four fallbacks).
-  const text = !outcome.ok
-    ? languagePreference === 'mi'
-      ? (FALLBACK_REPLY_MI[outcome.text] ?? outcome.text)
-      : responseStyle === 'plain'
-        ? (FALLBACK_REPLY_PLAIN[outcome.text] ?? outcome.text)
-        : outcome.text
-    : outcome.text;
+  // Select the caller's variant of a fixed failure fallback (issues
+  // #396/#430). Gated on `outcome.ok === false` AND on the outcome carrying
+  // a `fallbackNoticeId` — never on matching the rendered text — so a
+  // genuine model answer can never be rewritten (the #259 "threaded, not
+  // string-matched" discipline, now enforced by the type rather than by a
+  // comment). Axis precedence (a registered language claims the turn; style
+  // applies only otherwise) lives in the catalogue, so both preferences are
+  // passed RAW and no locale value is named here.
+  const text =
+    !outcome.ok && outcome.fallbackNoticeId
+      ? notice(outcome.fallbackNoticeId, { language: languagePreference, style: responseStyle })
+      : outcome.text;
 
   return {
     text,
@@ -996,7 +958,12 @@ async function execTurn(
       // is an internal ceiling on wall-clock duration, not something the SDK
       // or CLI reported, so neither heuristic below applies to it.
       noteUsageLimitOutcome(false, adapter, caller.conversationId, getAdapter);
-      return { ok: false, resumeFailed: false, text: INTERNAL_ERROR_REPLY };
+      return {
+        ok: false,
+        resumeFailed: false,
+        text: notice('internalErrorReply'),
+        fallbackNoticeId: 'internalErrorReply',
+      };
     }
     const msg = err instanceof Error ? err.message : String(err);
     logger.error({ err, conversationId: caller.conversationId }, 'Agent query failed');
@@ -1007,15 +974,17 @@ async function execTurn(
     // returns a fixed string (the raw error is never echoed).
     const usageLimitHit = isUsageLimitFailure(msg);
     noteUsageLimitOutcome(usageLimitHit, adapter, caller.conversationId, getAdapter);
+    const fallbackNoticeId: FallbackNoticeId = usageLimitHit
+      ? config.behaviour.upstreamLimitAlertEnabled
+        ? 'usageLimitReplyAdminNotified'
+        : 'usageLimitReply'
+      : 'internalErrorReply';
     return {
       ok: false,
       // Heuristic: resume failures surface as errors mentioning the session.
       resumeFailed: resumeSession != null && /session|resume/i.test(msg),
-      text: usageLimitHit
-        ? config.behaviour.upstreamLimitAlertEnabled
-          ? USAGE_LIMIT_REPLY_ADMIN_NOTIFIED
-          : USAGE_LIMIT_REPLY
-        : INTERNAL_ERROR_REPLY,
+      text: notice(fallbackNoticeId),
+      fallbackNoticeId,
     };
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -1037,7 +1006,8 @@ async function execTurn(
       // Non-success results (e.g. max turns) are turn failures, not resume
       // failures — those throw during init and are handled in the catch above.
       resumeFailed: false,
-      text: resultSubtype === 'error_max_turns' ? MAX_TURNS_REPLY : TURN_FAILED_REPLY,
+      text: notice(resultSubtype === 'error_max_turns' ? 'maxTurnsReply' : 'turnFailedReply'),
+      fallbackNoticeId: resultSubtype === 'error_max_turns' ? 'maxTurnsReply' : 'turnFailedReply',
       costUsd,
       cacheReadTokens,
       cacheCreationTokens,

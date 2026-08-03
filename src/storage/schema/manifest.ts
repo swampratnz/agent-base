@@ -1,17 +1,19 @@
-// Community Agent schema (PostgreSQL + pgvector)
+// agent-base schema (PostgreSQL + pgvector)
 // The embedding dimension is templated as :EMBEDDING_DIM by migrate.ts.
 //
-// The old monolithic src/storage/schema.sql is split into the fragment files
-// in this directory (docs/AGENT-BASE-PLAN.md Phase 1 item 4). Every statement
-// moved byte-verbatim — prod-schema continuity: migrate() replays the
-// concatenation over the already-applied production schema, so a reworded
-// statement could diverge the replay. The numbering gap is deliberate:
-// 00–27 base, 50–54 community, 70 adapter — later phases pull the bands apart
-// into per-module registrations. 54-language-prefs.sql is the `language_prefs`
-// table moved out of 17-prefs.sql (plan item 6): its 'mi' CHECK is community
-// content, so it lives in the community band — safe to reorder because the
-// table has no FK deps and every statement is IF NOT EXISTS, so the replay
-// over an already-migrated prod schema is unchanged.
+// These fragments are the BASE schema, lifted from community-agent
+// byte-verbatim apart from two CHECK constraints that enumerated one
+// deployment's locale/style values (17-prefs.sql, 54-language-prefs.sql —
+// see their comments). Verbatim matters: migrate() replays the concatenation
+// over an already-applied production schema, so a reworded statement could
+// diverge the replay, and the fragment NUMBERING is preserved for the same
+// reason — a consumer can drop its own copies and adopt these without a
+// migration. The numbering bands are 00–27 core, 50–53 feature tables,
+// 54 standing preferences, 70 adapter.
+//
+// A MODULE's own tables are not here: per-module migration contribution goes
+// through `AgentModule.migrations`, concatenated after these by createAgent's
+// base-first ordering.
 //
 // Concatenation ORDER is load-bearing (set_updated_at() before the triggers
 // that use it, referenced tables before their FKs, ALTERs after their CREATE),

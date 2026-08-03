@@ -13,7 +13,7 @@
  *    There is NO registration API that can insert, remove, reorder, or
  *    impersonate a spine clause.
  * 2. **Community sections**: a module registers CONTENT for the closed,
- *    base-declared slot set (`CommunityPromptSections` — charter, the
+ *    base-declared slot set (`ModulePromptSections` — charter, the
  *    behaviour-guideline chunks, web-search authority domains, date
  *    grounding). The base decides WHERE each slot renders; registering under
  *    an unknown name throws, a second registration throws, so a hostile
@@ -169,12 +169,12 @@ export const SECURITY_SPINE = Object.freeze([
 ] as const);
 
 /**
- * The community-owned prompt sections a module registers — the CLOSED slot
+ * The module-owned prompt sections a module registers — the CLOSED slot
  * set. Every field is required (same no-optional-fields discipline as the
  * digest deps types): a module supplies all of them or registration throws,
  * so a half-registered prompt can never boot.
  */
-export interface CommunityPromptSections {
+export interface ModulePromptSections {
   /** The agent's "constitution" — who it serves; renders first. */
   charter: string;
   /** The community half of the behaviour guidelines (concision, knowledge
@@ -183,9 +183,11 @@ export interface CommunityPromptSections {
   /** The auto-recall etiquette bullet (when NOT to re-run remember_search);
    * renders between the two security-spine chunks, at its historical spot. */
   recallEtiquette: string;
-  /** Community conduct/tool-offer bullets (report_content, suggest_improvement,
-   * rate_answer, preference tools); renders after SECURITY_SPINE_PRIVILEGED. */
-  communityConduct: string;
+  /** Conduct/tool-offer bullets naming the module's own tools (reporting,
+   * suggestions, rating, preference tools); renders after
+   * SECURITY_SPINE_PRIVILEGED. Named for what it IS, not for the deployment
+   * that first had one — community-agent called this `communityConduct`. */
+  conductGuidance: string;
   /** The #635 prompt-review checklist bullet — must stay byte-identical to
    * skills/prompt-review/SKILL.md's body (they move together; the equality is
    * pinned by tests/agentSkillsEnabled.test.ts). Inlined into the guidelines
@@ -197,32 +199,37 @@ export interface CommunityPromptSections {
   /** Renders the Context block's date-grounding line for the given instant —
    * day granularity only, or the prompt cache is invalidated every turn. */
   dateLine: (now: Date) => string;
-  /** The 'response-style' slot's body for a caller with a standing 'plain'
-   * preference (set_response_style) — community prose (jargon policy names
-   * Claude/API terms), so it registers rather than living in the assembler. */
-  plainLanguageStyle: string;
-  /** The 'language-preference' slot's body for a standing 'en' preference
-   * (set_language_preference) — NZ-English phrasing, community-owned. */
-  enLanguagePreference: string;
-  /** The 'language-preference' slot's body for a standing 'mi' preference —
-   * the te reo Māori guidance, community-owned. */
-  miLanguagePreference: string;
+  /**
+   * The 'response-style' slot's body, keyed by the caller's standing
+   * `set_response_style` value. A value with no entry (including the
+   * default, 'standard') renders no slot at all. A MAP, not one field per
+   * style: community-agent hardcoded `plainLanguageStyle` here and
+   * `responseStyle === 'plain'` in the assembler, which put a deployment's
+   * axis values inside base.
+   */
+  responseStyleSections: Readonly<Record<string, string>>;
+  /**
+   * The 'language-preference' slot's body, keyed by the caller's standing
+   * `set_language_preference` value ('en', 'mi', …). A value with no entry
+   * (including 'auto') renders no slot. Replaces community-agent's fixed
+   * `enLanguagePreference`/`miLanguagePreference` pair.
+   */
+  languagePreferenceSections: Readonly<Record<string, string>>;
 }
 
-const SECTION_KEYS: readonly (keyof CommunityPromptSections)[] = Object.freeze([
+const SECTION_KEYS: readonly (keyof ModulePromptSections)[] = Object.freeze([
   'charter',
   'behaviourGuidelines',
   'recallEtiquette',
-  'communityConduct',
+  'conductGuidance',
   'promptReviewClause',
   'webSearchAuthority',
   'dateLine',
-  'plainLanguageStyle',
-  'enLanguagePreference',
-  'miLanguagePreference',
+  'responseStyleSections',
+  'languagePreferenceSections',
 ]);
 
-let registered: CommunityPromptSections | null = null;
+let registered: ModulePromptSections | null = null;
 
 /**
  * Register the community prompt sections. Exactly once per process, exactly
@@ -231,7 +238,7 @@ let registered: CommunityPromptSections | null = null;
  * clause) is rejected as such, and a well-formed second registration throws
  * as a duplicate, leaving the booted section set untouched either way.
  */
-export function registerPromptSections(sections: CommunityPromptSections): void {
+export function registerPromptSections(sections: ModulePromptSections): void {
   const keys = Object.keys(sections);
   for (const key of keys) {
     if (!(SECTION_KEYS as readonly string[]).includes(key)) {
@@ -252,7 +259,7 @@ export function registerPromptSections(sections: CommunityPromptSections): void 
 }
 
 /** The registered community sections; throws if the community pack never loaded. */
-export function promptSections(): CommunityPromptSections {
+export function promptSections(): ModulePromptSections {
   if (!registered) {
     throw new Error('no prompt sections registered — import the community prompt-sections module first');
   }
@@ -267,7 +274,7 @@ export function promptSections(): CommunityPromptSections {
  * concatenation for the real registered sections.
  */
 export function buildGuidelinesBlock(
-  sections: CommunityPromptSections,
+  sections: ModulePromptSections,
   opts: { inlinePromptReview: boolean; imageInput: boolean },
 ): string {
   return [
@@ -276,7 +283,7 @@ export function buildGuidelinesBlock(
     SECURITY_SPINE_CORE,
     sections.recallEtiquette,
     SECURITY_SPINE_PRIVILEGED,
-    sections.communityConduct,
+    sections.conductGuidance,
     ...(opts.inlinePromptReview ? [sections.promptReviewClause] : []),
     AUTHORIZATION_NOTE,
     TONE_CALIBRATION_CLAUSE,
