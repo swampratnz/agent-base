@@ -163,8 +163,22 @@ jobs:
       # authentication error indistinguishable from a misconfigured publisher.
       # Upgrade explicitly; the preflight assertion below is what actually
       # guarantees the floor, this step is only the mechanism.
+      #
+      # PINNED TO THE 11.x LINE, not `@latest`. npm 12 disables git-protocol
+      # dependencies by default (`EALLOWGIT`), and this tree has one
+      # transitively — `libsignal`, via `@whiskeysockets/baileys` — so
+      # `npm ci` refuses the install outright. `@latest` meant the release
+      # path silently adopted npm's breaking default changes on npm's
+      # schedule rather than ours, while ci.yml (bundled npm 10) never saw
+      # them: a release could break with no code change and nothing red
+      # beforehand.
+      #
+      # Moving to 12 needs `--allow-git all` on every install here, which
+      # re-opens the very default 12 added deliberately. The better fix is
+      # upstream — a baileys that does not pull a git dependency — so this
+      # stays pinned until then rather than papering over it.
       - name: Upgrade npm to a trusted-publishing-capable version
-        run: npm install -g npm@latest
+        run: npm install -g 'npm@^11.5.1'
 
       # ───────────────────────────────────────────────────────────────────────
       # Preflight. Everything that can be known BEFORE ~20 minutes of gates
@@ -245,6 +259,17 @@ jobs:
           fi
           if [ "$(version_at_least "${node_version}" "${NODE_FLOOR}")" != "yes" ]; then
             fail "Node ${node_version} is below the trusted-publishing floor of ${NODE_FLOOR}. Raise node-version on the setup-node step."
+          fi
+
+          # And a CEILING, which is not symmetry for its own sake: npm 12
+          # disables git-protocol dependencies by default, this tree has one
+          # transitively (libsignal, via @whiskeysockets/baileys), and the
+          # install dies with EALLOWGIT — a message that says nothing about
+          # npm's major version. Whoever relaxes the pin above should be told
+          # what they are walking into, here, rather than 14 seconds later.
+          NPM_CEILING=12.0.0
+          if [ "$(version_at_least "${npm_version}" "${NPM_CEILING}")" = "yes" ]; then
+            fail "npm ${npm_version} is >= ${NPM_CEILING}, which refuses git-protocol dependencies by default; this tree has one transitively (libsignal, via @whiskeysockets/baileys) and \`npm ci\` will fail with EALLOWGIT. The 'Upgrade npm' step pins the 11.x line on purpose — see its comment before changing it."
           fi
 
           # `private: true` was the alternative path (never publish). If it
