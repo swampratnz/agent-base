@@ -202,6 +202,20 @@ jobs:
 
           fail() { echo "::error::$*"; exit 1; }
 
+          # `npm ci` refuses when package-lock.json's root version disagrees
+          # with package.json's, and a bare `npm pkg set version` (or a
+          # hand-edit) updates only the latter. CI never catches it: this job
+          # upgrades to an npm new enough for trusted publishing, which
+          # enforces the check, while ci.yml runs the runner's bundled npm,
+          # which does not — so the tree can be green everywhere and still be
+          # unpublishable. Assert it here, in a second, rather than a minute
+          # into the release. Use `npm version` (it writes both) and this stays
+          # quiet.
+          lock_version=$(node -p 'require("./package-lock.json").version')
+          if [ "${lock_version}" != "${version}" ]; then
+            fail "package-lock.json is at '${lock_version}' but package.json is at '${version}'. \`npm ci\` will refuse this tree. Run \`npm install --package-lock-only\` and commit the result."
+          fi
+
           # Numeric semver compare, because `sort -V` is not on every runner and
           # a string compare puts 11.5.1 below 9.0.0.
           version_at_least() {
