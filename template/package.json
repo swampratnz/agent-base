@@ -24,7 +24,7 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@swampratnz/agent-base": "^0.1.0",
+    "@swampratnz/agent-base": "^0.1.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
