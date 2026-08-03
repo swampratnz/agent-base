@@ -1,7 +1,8 @@
 {
   "name": "@swampratnz/agent-base",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Community-agnostic base framework for Claude Agent SDK bots: platform adapters, RBAC, persistent memory, confirm-gated tools, and a module API for building specific agents on top.",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,6 +13,7 @@
     },
     "./package.json": "./package.json"
   },
+  "_comment_files": "An allowlist, so anything not named here is absent from the tarball. `dist` has to carry the storage/schema/*.sql fragments as well as the JS — the build script copies them and check-dist-schema.mjs fails the build if it did not, because a consumer that installs this and cannot `migrate:prod` is broken. `scripts` ships the two gate scripts a scaffolded repo runs out of node_modules (see template/package.json). npm always adds README.md, LICENSE and package.json regardless of this list. Verify with `npm pack --dry-run` after changing it.",
   "files": [
     "dist",
     "scripts"
@@ -20,6 +22,8 @@
     "node": ">=22"
   },
   "scripts": {
+    "_comment_prepublishOnly": "Runs on `npm publish` (not on `npm pack`/`npm ci`), so a hand-run publish from a laptop can never ship a stale or missing dist/. The publish workflow builds first anyway — this is the backstop for the path that skips it.",
+    "prepublishOnly": "npm run build",
     "build": "tsc -p tsconfig.json && cp src/storage/schema/*.sql dist/storage/schema/ && node scripts/check-dist-schema.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && npm run typecheck:tests",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
@@ -38,8 +42,14 @@
     "type": "git",
     "url": "git+https://github.com/swampratnz/agent-base.git"
   },
+  "homepage": "https://github.com/swampratnz/agent-base#readme",
+  "bugs": {
+    "url": "https://github.com/swampratnz/agent-base/issues"
+  },
+  "_comment_publishConfig": "Public npmjs.com, NOT GitHub Packages — see docs/ROADMAP.md's Phase 0 decisions. GitHub Packages' npm registry demands a token even to INSTALL a public package, which would put an auth step between the production deploy host and a redeploy; public npm needs none. The registry is pinned here rather than left to whatever .npmrc the publishing machine happens to have.",
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",

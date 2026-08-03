@@ -61,9 +61,21 @@ timezone, the vendor URL defaults, the community field names) were removed as
 part of the move; and `createAgent({ modules })` was written, so composition is
 an ordered, fail-closed call rather than an import list.
 
+Then the publishing story: MIT licensing, `package.json` made publish-ready
+(`0.1.0`, the `files` allowlist verified against a real `npm pack`,
+`publishConfig` pointed at public npm) and a tag-triggered publish workflow
+that runs the full gate, refuses a tag that disagrees with `package.json`, and
+authenticates by **trusted publishing (OIDC)** — no npm token exists in this
+repository at all, and provenance is generated automatically. Nothing is
+published yet, and the FIRST release deliberately cannot come through that
+workflow: npm will not configure a trusted publisher for a package that does
+not exist, so `0.1.0` is a one-time manual publish. See
+[`RELEASING.md`](RELEASING.md) for that bootstrap and the owner-only
+prerequisites around it.
+
 Still to come: the pipeline as reusable workflows, the consumer-side follow-up
-in community-agent that makes the canary meaningful, and a 0.1.0 tag once it
-is green.
+in community-agent that makes the canary meaningful, and the 0.1.0 tag itself
+once that is green.
 
 ## Contract stability
 
@@ -75,10 +87,33 @@ build against this package before Phase 3 tags a 0.1.0.
 
 ## Phase 0 decisions of record
 
-- **Distribution**: npm package(s) published to GitHub Packages, plus the
+- **Distribution**: npm package(s) published to **public npmjs.com**, plus the
   pipeline as reusable workflows in this repo; per-repo state
   (security-floor manifest, tests-include ratchet, module map, VISION.md,
   theme labels, CI dummy env, governance-path list) stays per-repo.
+
+  _Amended._ This decision originally read "GitHub Packages", and is now
+  **overruled in favour of public npm**. GitHub Packages' npm registry requires
+  an authenticated token to _install_, even for a public package — so every
+  consumer, including the production deploy host, would need a credential (and
+  a credential expiry) sitting in the path of `npm ci`. That is a fragile place
+  for an auth step: the moment it bites is a 2am redeploy. Public npm needs no
+  auth on any consumer at all.
+
+- **Publish authentication**: **trusted publishing (OIDC)**, not an npm
+  automation token. npm now warns against long-lived tokens, and the difference
+  is the blast radius: a leaked automation token publishes from anywhere until
+  someone notices, whereas an OIDC grant is minted per run, expires in minutes,
+  and is bound to this repository AND this workflow filename. Consequently this
+  repository holds **no npm secret of any kind**, provenance attestations come
+  automatically, and the toolchain floors (npm >= 11.5.1, Node >= 22.14.0) are
+  asserted in the workflow rather than assumed. One wrinkle to know: npm cannot
+  pre-authorise a publisher for a package that does not exist, so the first
+  release is a one-time manual publish and everything after it is credential-free.
+  The mechanism is
+  [`.github/workflows/publish.yml`](../.github/workflows/publish.yml); the
+  procedure, the bootstrap, and the owner-only prerequisites are in
+  [`RELEASING.md`](RELEASING.md).
 - **Namespacing**: the MCP server key / `mcp__<ns>__` prefix is a module
   property (`AgentModule.name`), not a hardcoded literal.
 - **DB naming**: physical table names (e.g. `community_users`) are kept for

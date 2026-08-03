@@ -18,6 +18,8 @@ Read `README.md`, then:
   community-agent's **real code**, with a contract-vs-code table at the end.
   This is the most useful document in the repo; read it before believing a type.
 - `docs/SECURITY.md` — the runtime invariants and the pipeline threat model.
+- `docs/RELEASING.md` — how a release is cut, and why this package publishes
+  to **public npmjs.com** rather than GitHub Packages.
 - `docs/agents/` — the committed context pack for cold sessions.
 
 ## What is base and what is a module
@@ -129,6 +131,26 @@ then.
   header lists exactly what the consumer-side follow-up must do. Turn the
   variable on in the same change that makes the consumer depend on the
   package.
+- The publish workflow (`publish.yml`) fires on a `v*.*.*` tag and runs the
+  **same gate set as CI** before `npm publish`, because a tag can point at any
+  commit — including one no PR ever adjudicated — and an npm version is
+  immutable once published. Keep the two in step when you edit either.
+  It publishes to public npmjs.com by **trusted publishing (OIDC)**: this
+  repository holds **no npm token**, and none should ever be added. Three things
+  follow, all of them easy to break by accident:
+  **(a) do not rename the file** — the trusted publisher on npmjs.com is
+  registered against the literal filename `publish.yml`, so a rename breaks
+  every release until someone updates that setting;
+  **(b) `id-token: write` at job level is the credential** — remove it and there
+  is nothing to fall back on;
+  **(c) provenance is automatic**, so `--provenance` is deliberately not passed,
+  and it needs this repository to stay **public**.
+  Trusted publishing also has hard floors (npm >= 11.5.1, Node >= 22.14.0) which
+  the workflow upgrades toward and then asserts. `workflow_dispatch` defaults to
+  a dry run that exercises everything and authenticates not at all. The FIRST
+  release cannot use any of this — npm will not configure a publisher for a
+  package that does not exist — so `0.1.0` is a one-time manual publish.
+  Procedure, bootstrap and the owner-only prerequisites: `docs/RELEASING.md`.
 
 ## Conventions
 

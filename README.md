@@ -135,7 +135,7 @@ The full write-up, including the development pipeline's own threat model, is in
 src/module-api/   the AgentModule manifest and its component types (v0)
 tests/            contract tests and the gate scripts' own coverage
 scripts/          the gates (security floor, context pack)
-docs/             ROADMAP · MODULE-API · SECURITY · ARCHITECTURE · STANDARDS
+docs/             ROADMAP · MODULE-API · SECURITY · ARCHITECTURE · STANDARDS · RELEASING
 docs/agents/      the committed context pack (gated by context:check)
 template/         new-agent repo template
 ```
