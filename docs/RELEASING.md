@@ -265,8 +265,13 @@ The workflow, in one job, in this order:
 1. **Toolchain** — `actions/setup-node` with
    `registry-url: https://registry.npmjs.org` and `package-manager-cache: false`
    (npm's own guidance: never cache in a release build), then an explicit
-   `npm install -g npm@latest`.
-2. **Preflight** — asserts npm >= 11.5.1 and Node >= 22.14.0; refuses
+   `npm install -g 'npm@^11.5.1'` — **pinned to the 11.x line, not `@latest`**.
+   npm 12 disables git-protocol dependencies by default and this tree has one
+   transitively (`libsignal`, via `@whiskeysockets/baileys`), so `npm ci` fails
+   with `EALLOWGIT` there. `@latest` also meant the release path adopted npm's
+   breaking default changes on npm's schedule rather than ours, invisibly:
+   `ci.yml` uses the runner's bundled npm and never sees them.
+2. **Preflight** — asserts npm >= 11.5.1 **and < 12.0.0** and Node >= 22.14.0; refuses
    `private: true`; refuses a missing `license` field _or_ a missing `LICENSE`
    file; checks the tag shape and that it matches `package.json`; and, for a
    real publish, checks a GitHub OIDC token is actually available to the job.
