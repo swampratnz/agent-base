@@ -4,10 +4,12 @@ Guidance for any Claude Code session working in `swampratnz/agent-base`.
 
 ## What this is
 
-The community-agnostic base framework being extracted from
-`swampratnz/community-agent`. Today it holds the **contract**, the **gates**,
-the **docs** and the **new-agent template** — not the runtime, which arrives by
-extraction rather than by being written fresh here.
+The community-agnostic base framework extracted from
+`swampratnz/community-agent`. It holds the **runtime** (`src/` — the agent
+kernel, platform adapters, storage + schema, router spine, jobs, auth, config),
+the **contract** (`src/module-api/`), `createAgent`, the **gates**, the **docs**
+and the **new-agent template**. The runtime arrived by extraction, not by being
+written fresh here — see `docs/ROADMAP.md`.
 
 Read `README.md`, then:
 
@@ -36,10 +38,10 @@ the mechanism and the module registers data into it.
 
 ## Ground rules
 
-- **Do not write runtime code here ahead of the extraction.** The runtime
-  arrives by moving code that already has tests, a security floor and a
-  pipeline adjudicating it. Writing it fresh here forfeits that. Contract
-  types, gates, docs and template work are all in scope.
+- **Prefer moving runtime code over writing it.** Anything that already
+  exists in community-agent arrives by extraction, with its tests, its
+  security floor and the pipeline that adjudicated it. Writing an equivalent
+  fresh here forfeits all three.
 - **community-agent is authoritative on seam shapes** while its refactor is
   underway: if a seam lands there differing from these types, fix the types to
   match, and update `docs/MODULE-API.md`'s contract-vs-code table.
@@ -60,9 +62,17 @@ the mechanism and the module registers data into it.
 
 ```
 npm run typecheck && npm run lint && npm run format:check \
-  && npm test && npm run build \
+  && npm run migrate && npm test && npm run build \
   && npm run context:check && npm run test:security
 ```
+
+`DATABASE_URL` must point at a Postgres 16 + pgvector database for the
+DB-backed tests to actually run (`repository.test.ts` alone carries 117
+`SECURITY:` cases). They SKIP cleanly when it is unset, so a contributor
+without local Postgres is not blocked — but a skipped suite proves nothing, so
+run them before claiming green. Use your OWN database, never a sibling repo's:
+concurrent runs corrupt each other's fixtures because `node:test` runs test
+FILES in parallel.
 
 CI runs exactly this, in three jobs (`build`, `lint`, `security-invariants`).
 All green before opening or updating a PR.
@@ -89,9 +99,19 @@ Both gate scripts take path flags (`--root`, `--src`, `--tests-dir`,
 every agent scaffolded from `template/`. Their own tests drive every failure
 mode against fixture trees; extend those when you change a gate.
 
-`scripts/check-dist-schema.mjs` is deliberately absent: it smoke-checks that
-built SQL fragments match their manifest, and there is no storage layer here
-yet. It comes with the storage extraction.
+`scripts/check-dist-schema.mjs` runs at the end of `npm run build`: `tsc`
+compiles `storage/schema/manifest.ts` but never copies the `.sql` fragments, so
+the copy step in the build script is what puts them in `dist/`. A forgotten or
+partial copy would otherwise surface only as an ENOENT from `migrate:prod` on
+the deploy box.
+
+There is **no `imports:check` here**, deliberately. community-agent needs it
+because that repo holds both halves and the one-way `src/base/` → `src/module/`
+rule has to be mechanically enforced. This repo has only the base half: there
+is no module directory to import from, so the rule is enforced by the
+repository boundary itself and porting the gate would add a check that can
+never fail. If a `modules/` or `examples/` tree is ever added here, port it
+then.
 
 ## Scope notes
 
@@ -100,10 +120,15 @@ yet. It comes with the storage extraction.
 - `template/` is outside lint, Prettier and both tsconfigs: it is copied *out*
   of this repo, and its `main.ts` imports a runtime that does not exist yet.
   The gates will not catch a mistake in it; keep it honest by hand.
-- The canary workflow (`canary-community-agent.yml`) cannot pass until
-  community-agent depends on this package, so it is gated behind the
-  `AGENT_BASE_CANARY_ENABLED` repository variable and skips by default. Turn it
-  on in the same change that makes the consumer depend on the package.
+- The canary workflow (`canary-community-agent.yml`) builds this commit,
+  `npm pack`s it, installs the tarball into a community-agent checkout (no
+  publish, no version bump) and runs that repo's typecheck/migrate/test/build.
+  It cannot pass until community-agent actually depends on the package, so it
+  is gated behind the `AGENT_BASE_CANARY_ENABLED` repository variable and skips
+  by default; `workflow_dispatch` with `force: true` runs it on demand. Its
+  header lists exactly what the consumer-side follow-up must do. Turn the
+  variable on in the same change that makes the consumer depend on the
+  package.
 
 ## Conventions
 

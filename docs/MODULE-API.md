@@ -25,30 +25,64 @@ shape. Where the two differ, the differences are enumerated in
 | **partial** | The seam is reified — the base no longer hard-codes the content — but registration is static composition (an array or an object literal in one file), not a runtime call a third module could make. |
 | **planned** | No implementation. The plan names the extension point; nothing registers anything yet. Do not build against it. |
 
-Nothing below is published from this package yet. The runtime lands here by
-extraction (see [ROADMAP.md](ROADMAP.md)); until then these are the shapes an
-extraction PR must preserve.
+The runtime has landed by extraction (see [ROADMAP.md](ROADMAP.md)): `src/`
+now holds the agent kernel, adapters, storage, router spine, jobs, auth and
+config, and `src/createAgent.ts` is the composition entry point. The
+`src/module-api/` types below remain the published **v0 contract** for the
+extension points whose runtime is not yet reified as registration; where they
+and the live code disagree, the [contract-vs-code table](#contract-vs-code)
+says so and the live code wins.
 
 ---
 
-## How registration works today
+## How registration works
 
-There is no `createAgent({ modules: [...] })` yet. The composition root
-(`src/index.ts`) performs **side-effect imports** of the module-owned files,
-each of which calls its registration function at its own module scope:
+**live.** `src/createAgent.ts`.
 
 ```ts
-// src/index.ts, before anything that could run a turn
-import './strings/notices.js';              // registerNoticePack
-import './storage/policies.js';             // registerPolicyKeys
-import './agent/communityPromptSections.js';// registerPromptSections
-import './agent/communityTurnState.js';     // registerTurnStateFinalizer
-import './agent/personas.js';               // registerPersona
-import './agent/enabledSkills.js';          // registerSkillsManifest
-import './commands.js';                     // registerCommands
+const agent = await createAgent({ modules: [nzCommunityModule] });
+await agent.start(() => startAdaptersAndJobs());
 ```
 
-Two conventions hold across every registry, and both are load-bearing:
+`createAgent` runs a fixed seven-step order:
+
+1. **plan** — a PURE pass: unique module names, at most one claimant per
+   once-per-process registry, every required registry claimed by somebody.
+   It reports every problem together and runs before any side effect, so a
+   composition that cannot serve a turn is rejected with the process
+   untouched. `planComposition(modules)` is exported for use in a test.
+2. **init** — each module's `init()`, in declaration order, before anything
+   is registered (so an init hook cannot observe or race another module's
+   registrations).
+3. **singleton registries** — notice pack, tool tiers, tool-server parts,
+   flagged-tool predicates, skills manifest, prompt sections, commands,
+   default bad words.
+4. **additive registries** — personas, turn-state finalizers, policy keys,
+   provenance, purge contributors, pre-turn intercepts, post-turn handlers.
+5. **the readiness gate** — `assertRegistrationsComplete()` probes the real
+   fail-closed accessors: step 1 proved the manifests *say* they fill
+   everything, this proves the registries took it.
+6. **migrations** — base fragments first, then `AgentModule.migrations`, as
+   ONE multi-statement query.
+7. **start** — only now may a turn run. `agent.assertStarted()` is the guard.
+
+This replaces community-agent's composition root, which performed
+**side-effect imports** of module-owned files in a load-bearing order:
+
+```ts
+// community-agent's src/index.ts, before anything that could run a turn
+import './module/strings/notices.js';               // registerNoticePack
+import './module/storage/policies.js';              // registerPolicyKeys
+import './module/agent/communityPromptSections.js'; // registerPromptSections
+// …
+```
+
+That works for one module in one repo. Its three problems — the order lives in
+an import list nothing enforces, a forgotten import surfaces at first use, and
+registration-by-import makes import order a correctness problem — are what the
+seven steps above address.
+
+Two conventions still hold across every registry, and both are load-bearing:
 
 1. **Register once, then it is frozen.** A second registration throws rather
    than swapping the registered value after boot. A tool inventory, a notice
@@ -605,7 +639,7 @@ implementation**. Documented here so nobody builds against them:
 | `secrets` — `registerRuntimeSecret()` per credential | `runtimeSecrets()` is a hand-listed function reading the config singleton. Every new outward credential must be added to it by hand; that list is the DLP backstop |
 | `auditActionKinds` / `trackedCostJobs` | fixed allowlist constants |
 | `featureFlags` (the operator rundown) | a fixed `FEATURE_FLAG_MAP` array. Distinct from the *tool-level* flag predicates, which ARE registered |
-| `createAgent({ modules })` | side-effect imports at the composition root (see [§ How registration works today](#how-registration-works-today)) |
+| ~~`createAgent({ modules })`~~ | **live** — `src/createAgent.ts` (see [§ How registration works](#how-registration-works)) |
 
 ---
 
@@ -627,9 +661,9 @@ make deliberately — reconcile the type to the code, or change the code:
 | `ToolContext.callerScope(): Promise<string[]>` | `Promise<string[] \| null>` | `null` means unrestricted (super admin) — a meaningful third state the contract loses. |
 | `ProvenanceTrust = 'quarantined' \| 'trusted' \| 'human-tier'` | `'quarantined' \| 'trusted'` | Human tiers are registered as `trusted` explicitly rather than being a third kind. |
 | `PurgeContributor.purge(platform, userId, tx)` | `purge(id: LifecycleIdentity, tx)`, plus required `name` and `order` | The order field is the important omission: iteration order must be explicit, not load order. |
-| `TurnStateBag = Map<string, unknown>` | an empty interface augmented via `declare module` | The code keeps concrete per-key types; the contract erases them. |
+| `TurnStateBag = Map<string, unknown>` | an interface declaring the five keys base's own post-turn handlers read, augmentable by a module for its own | The code keeps concrete per-key types; the contract erases them. Base has to declare the keys it READS — nothing else in the tree writes them, so an empty interface left base's own router uncompilable. |
 | `PreTurnIntercept.handle() => string \| null` | `run(ctx) => 'continue' \| 'handled'` | The code's intercepts act through the router rather than returning reply text. |
-| `AdapterTextPack` with a `variants` map | fixed fields including `warnUserDmPrefixMi` | The contract is right and the code is not: a locale is named in a base type. Worth fixing before extraction, not after. |
+| `AdapterTextPack` with a `variants` map | `warnUserDmPrefixByLanguage?: Record<string, string>` | Resolved during the lift: the fixed `warnUserDmPrefixMi` field became an open per-language map keyed by the registered axis, so base names no locale. Same idea as the contract's `variants`, one level flatter. |
 | `AgentModule.name` doubles as the MCP namespace | the MCP server name is registered via `registerToolServerParts({ name })` | Same idea, different carrier. |
-| `strings` pack registered per module | exactly ONE notice pack per process | `registerNoticePack` throws on a second call. Multi-module string packs need a merge step that does not exist. |
-| `promptSections` as an open set | a **closed**, all-required slot set | The code's version is stronger and should win: an open set would let registration introduce prompt text at an unreviewed position. |
+| `strings` pack registered per module | exactly ONE notice pack per process, and it must cover every id in `BASE_NOTICE_IDS` | `registerNoticePack` throws on a second call, and now also on an INCOMPLETE first call, naming every missing id — base declares the ids it serves and a pack supplies the text. Multi-module string packs still need a merge step that does not exist; `createAgent` refuses two claimants rather than silently picking one. |
+| `promptSections` as an open set | a **closed**, all-required slot set (`ModulePromptSections`) | The code's version is stronger and should win: an open set would let registration introduce prompt text at an unreviewed position. The style/language slot BODIES are open maps keyed by the caller's raw preference, so the closed slot set costs no localisation flexibility. |

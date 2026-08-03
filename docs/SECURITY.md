@@ -8,13 +8,27 @@ This document has two halves, because agent-base ships two things:
    development pipeline the reusable workflows carry, which is a security
    surface in its own right even though it touches no member data.
 
-The runtime half is **contract-only today**: the enforcement code lands here by
-extraction from
+The runtime half is **live code now**: the enforcement points were extracted
+from
 [`swampratnz/community-agent`](https://github.com/swampratnz/community-agent),
 whose `docs/SECURITY.md` remains the battle-tested long form (per-tool
 rationale, per-platform notes, incident write-ups, and the accepted residual
 risks of that particular deployment). What is written here is what agent-base
 OWNS — deployment specifics belong in each agent's own SECURITY.md.
+
+Two enforcement points the extraction ADDED, both fail-closed at startup
+rather than at first use:
+
+- **`registerNoticePack` rejects an incomplete pack**, naming every missing
+  id. Base declares the notice ids it serves (`BASE_NOTICE_IDS`) and a module
+  supplies the text; a gap would otherwise surface as a throw — or blank
+  text — in front of a member, on a path (moderation DMs, pause shedding) a
+  module author will not necessarily exercise before shipping.
+- **`createAgent` refuses an incomplete composition** and returns nothing, so
+  there is no object a caller could start against a half-filled registry: no
+  narrower tool surface from a forgotten tool-tier registration, no
+  unregistered moderation floor, no missing skills allowlist. Its plan pass is
+  pure and runs first, so a rejected composition leaves the process untouched.
 
 Treat it as a living document: review it whenever a tool, a platform or a loop
 is added. If a change weakens something below, it is not a refactor.

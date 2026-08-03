@@ -45,17 +45,25 @@ Read from community-agent's `src/` rather than from anyone's status report.
   startup — but the descriptor and factory lists are static and `create()`
   still reads the config singleton).
 - **Not started**: moderation policy, digest/queue registries, ingest sources
-  and refresh topics, per-credential secret registration, and
-  `createAgent({ modules })` itself.
+  and refresh topics, per-credential secret registration.
 
-### What Phase 3 has done here so far
+### What Phase 3 has done here
 
-The parts that do not depend on the final `src/base/` boundary: the package
-skeleton and lint/format/typecheck ratchet, the two gate scripts (generalised
-to multi-root layouts, with their own tests), CI running the full gate set,
-the cross-repo canary, `docs/MODULE-API.md`, and `template/`. Still to come:
-the runtime lift itself, the pipeline as reusable workflows, and
-`check-dist-schema.mjs` (which needs a storage layer to check).
+First: the parts that did not depend on the final `src/base/` boundary — the
+package skeleton and lint/format/typecheck ratchet, the two gate scripts
+(generalised to multi-root layouts, with their own tests), CI running the full
+gate set, the cross-repo canary, `docs/MODULE-API.md`, and `template/`.
+
+Then the lift itself: `src/base/**` moved into `src/**` with the SQL fragments,
+`check-dist-schema.mjs`, and the tests that exercise base only; the
+community-flavoured VALUES the split left behind (locale literals, the pinned
+timezone, the vendor URL defaults, the community field names) were removed as
+part of the move; and `createAgent({ modules })` was written, so composition is
+an ordered, fail-closed call rather than an import list.
+
+Still to come: the pipeline as reusable workflows, the consumer-side follow-up
+in community-agent that makes the canary meaningful, and a 0.1.0 tag once it
+is green.
 
 ## Contract stability
 

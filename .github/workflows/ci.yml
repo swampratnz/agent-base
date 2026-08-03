@@ -3,7 +3,7 @@ name: CI
 # The same gate set community-agent runs, in the same three jobs, so code
 # extracted from there lands under the checks it already passed:
 #
-#   build                typecheck (incl. the tests ratchet) → test → build
+#   build                typecheck (incl. the tests ratchet) → migrate → test → build
 #   lint                 lint → format:check → context:check
 #   security-invariants  test:security, with the PR-base lowering guard
 #
@@ -50,11 +50,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     services:
-      # No test consumes this yet — the storage layer arrives with the
-      # extraction pass. It is wired now, with the same image and health-check
-      # shape community-agent uses, so that pass lands green without also
-      # having to get a workflow change right, and so DB-backed tests behave
-      # here exactly as they do there from their first commit.
+      # The lifted storage layer's tests run against this for real —
+      # repository.test.ts alone carries 117 SECURITY: cases. Same image and
+      # health-check shape community-agent uses, so DB-backed tests behave
+      # here exactly as they do there.
       postgres:
         image: pgvector/pgvector:pg16
         env:
@@ -83,6 +82,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # Apply the schema before the DB-backed tests. They SKIP cleanly when
+      # DATABASE_URL is unset, but with a reachable database and no schema they
+      # would fail on missing relations — so the migrate step is what makes
+      # "DB tests actually ran" true here rather than merely unverified.
+      - run: npm run migrate
       - run: npm test
       - run: npm run build
 

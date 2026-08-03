@@ -10,11 +10,39 @@ name: Canary — build community-agent against agent-base HEAD
 # local tarball, then community-agent's own typecheck + test + build run.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# IT WILL NOT PASS UNTIL THE EXTRACTION LANDS, AND THAT IS EXPECTED.
+# IT WILL NOT PASS UNTIL COMMUNITY-AGENT CONSUMES THE PACKAGE, AND THAT IS
+# EXPECTED.
 # ─────────────────────────────────────────────────────────────────────────────
-# community-agent does not depend on @swampratnz/agent-base yet, so today this
-# job proves only that its tree still builds. Rather than let a known-premature
-# check red the repo, the job is gated behind a repository VARIABLE:
+# The extraction has now landed on THIS side: `src/` is the base runtime and
+# `npm pack` produces a real, installable package. community-agent still has
+# its own `src/base/`, still declares no dependency on
+# `@swampratnz/agent-base`, and still supplies the community values this repo
+# removed. So the canary installs the tarball and then measures the gap
+# (`Report what a green canary still needs`) rather than pretending to be
+# green. What a green run requires on the consumer side:
+#
+#   1. delete `src/base/`, add `"@swampratnz/agent-base": "<version>"` as a
+#      dependency, and repoint every `src/module/**` import from
+#      `../../base/x.js` to `@swampratnz/agent-base`;
+#   2. replace the composition root's side-effect imports with
+#      `createAgent({ modules: [nzCommunityModule] })`;
+#   3. supply the values base stopped shipping — the notice pack must now
+#      cover `gatedNoticeWithAdmins` and `guidelinesHeading` as well as every
+#      other id in `BASE_NOTICE_IDS`; `DISPLAY_TIMEZONE=Pacific/Auckland`,
+#      `DISPLAY_LOCALE=en-NZ`, `DOCS_INGEST_INDEX_URL` and
+#      `STATUS_CHECK_API_URL` move to env; `ModulePromptSections` takes
+#      `conductGuidance` plus the `responseStyleSections`/
+#      `languagePreferenceSections` maps instead of
+#      `communityConduct`/`plainLanguageStyle`/`enLanguagePreference`/
+#      `miLanguagePreference`; the router deps are
+#      `getConductGuidelinesFn`/`getLocalisedConductGuidelinesFn`/
+#      `buildDigestContentFn`; and `communityTurnState.ts` drops the five
+#      `TurnStateBag` keys base now declares itself;
+#   4. keep its own community schema fragments, contributed through
+#      `AgentModule.migrations` rather than the base manifest.
+#
+# Rather than let a known-premature check red the repo, the job is gated
+# behind a repository VARIABLE:
 #
 #     Settings → Secrets and variables → Actions → Variables
 #     AGENT_BASE_CANARY_ENABLED = true
@@ -95,6 +123,12 @@ jobs:
           ref: ${{ inputs.ref }}
           path: .canary/app
           persist-credentials: false
+          # The default GITHUB_TOKEN is scoped to THIS repository, so it can
+          # only read community-agent while that repo is public. Set the
+          # CANARY_REPO_TOKEN secret (a read-only PAT or an App token) if it
+          # ever goes private; the fallback keeps the public case
+          # zero-configuration.
+          token: ${{ secrets.CANARY_REPO_TOKEN || github.token }}
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -114,14 +148,60 @@ jobs:
       - name: Point community-agent at agent-base HEAD
         working-directory: .canary/app
         run: |
-          # --no-save: the override is for this run only, never a commit. Once
-          # the consumer really depends on the package this replaces the
-          # registry copy in node_modules with the tarball built above; until
-          # then it is an unused extra install and the steps below still prove
-          # the consumer's tree is healthy.
+          set -euo pipefail
+          # --no-save: the override is for this run only, never a commit. It
+          # installs the LOCAL tarball built from this commit, so nothing is
+          # published and no version is bumped — that is the whole point of a
+          # canary. Once the consumer really declares the dependency this
+          # replaces the registry copy in node_modules; until then it is an
+          # extra top-level install that its imports do not reach yet.
           tarball=$(ls "${RUNNER_TEMP}"/swampratnz-agent-base-*.tgz | head -1)
           echo "Installing ${tarball}"
           npm install --no-save "${tarball}"
+
+          # Fail loudly if the install did not actually take. An
+          # always-succeeding "point at HEAD" step would make every later step
+          # a test of the registry copy (or of nothing at all), which is
+          # exactly the silent-green failure mode this job exists to avoid.
+          installed=.canary-check
+          node -e '
+            const fs = require("fs");
+            const p = "node_modules/@swampratnz/agent-base/package.json";
+            if (!fs.existsSync(p)) {
+              console.error("canary: the agent-base tarball is not installed in community-agent/node_modules");
+              process.exit(1);
+            }
+            const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
+            if (!fs.existsSync("node_modules/@swampratnz/agent-base/dist/index.js")) {
+              console.error("canary: installed package has no dist/index.js — npm pack shipped an unbuilt tree");
+              process.exit(1);
+            }
+            console.log(`canary: installed @swampratnz/agent-base@${pkg.version} from the local tarball`);
+          '
+          rm -f "$installed"
+
+      - name: Report what a green canary still needs
+        working-directory: .canary/app
+        run: |
+          set -euo pipefail
+          {
+            echo "### Canary gap report"
+            echo
+            if node -e 'const p=require("./package.json");process.exit((p.dependencies||{})["@swampratnz/agent-base"]?0:1)'; then
+              echo "- community-agent DECLARES a dependency on \`@swampratnz/agent-base\` ✅"
+            else
+              echo "- community-agent does NOT declare \`@swampratnz/agent-base\` yet — the steps below"
+              echo "  exercise its own tree, not this package. See the header of this workflow for"
+              echo "  the follow-up PR's checklist."
+            fi
+            if [ -d src/base ]; then
+              echo "- \`src/base/\` still exists there ($(find src/base -type f | wc -l) files) — it is the copy this package replaces."
+            else
+              echo "- \`src/base/\` is gone ✅"
+            fi
+            echo
+            echo "Installed base version: $(node -p 'require("./node_modules/@swampratnz/agent-base/package.json").version')"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: community-agent typecheck
         working-directory: .canary/app
