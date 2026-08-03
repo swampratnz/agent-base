@@ -1,7 +1,7 @@
 {
   "backgroundJobHealth.test.ts": 1,
   "createAgent.test.ts": 1,
-  "gatedNotice.test.ts": 1,
+  "gatedNotice.test.ts": 6,
   "healthState.test.ts": 1,
   "knowledgeCandidateDedupDegradation.test.ts": 1,
   "knowledgeScope.test.ts": 4,
