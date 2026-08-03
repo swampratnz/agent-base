@@ -43,7 +43,9 @@
 //
 //   --root <dir>          repo root (default: this script's parent directory).
 //                         Relocates everything below; lets the gate's own
-//                         tests drive it against fixture trees.
+//                         tests drive it against fixture trees. A repo that
+//                         CONSUMES this package must pass `--root .`, because
+//                         the default resolves inside node_modules.
 //   --tests-dir <dir>     a test root, repo-relative. Repeatable. Default:
 //                         `tests`.
 //   --manifest <path>     manifest location, repo-relative. Default:

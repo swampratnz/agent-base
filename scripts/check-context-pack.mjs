@@ -19,10 +19,10 @@
 //   * no entry is left as an unwritten stub.
 //
 // Scope is the source roots only — their subsystem directories and top-level
-// modules. Workflows are documented far better in docs/PIPELINE.md than a
-// one-liner could manage, and gating tests/ would mean a lot of upkeep for
-// little orientation value. The map file may describe anything it likes
-// OUTSIDE the checked region; only the region is enforced.
+// modules. Workflows are documented far better in prose than a one-liner could
+// manage, and gating the test files would mean a lot of upkeep for little
+// orientation value. The map file may describe anything it likes OUTSIDE the
+// checked region; only the region is enforced.
 //
 // `--write` mechanises the boring half (add/drop/sort) but deliberately CANNOT
 // make the gate green on its own: it inserts a TODO stub for a new module and
@@ -41,7 +41,9 @@
 //
 //   --root <dir>   repo root (default: this script's parent directory).
 //                  Relocates both the source scan and the map; lets the
-//                  gate's own tests drive it against fixture trees.
+//                  gate's own tests drive it against fixture trees. A repo
+//                  that CONSUMES this package must pass `--root .`, because
+//                  the default resolves inside node_modules.
 //   --src <dir>    a source root, repo-relative. Repeatable. Default: `src`.
 //   --map <path>   the map file, repo-relative. Default:
 //                  `docs/agents/module-map.md`.

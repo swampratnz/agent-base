@@ -250,3 +250,13 @@ test('the real docs/agents/module-map.md is in sync with the real tree', () => {
   const result = spawnSync('node', [SCRIPT], { encoding: 'utf8' });
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
 });
+
+test("template/'s module map is in sync with template/src", () => {
+  // template/ is outside every other gate's scope (lint, Prettier, both
+  // tsconfigs) because it is copied OUT of this repo rather than compiled by
+  // it — so nothing else would notice its map going stale. This is the one
+  // check that does, and it is cheap.
+  const root = fileURLToPath(new URL('../template', import.meta.url));
+  const result = spawnSync('node', [SCRIPT, '--root', root], { encoding: 'utf8' });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+});

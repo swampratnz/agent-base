@@ -356,3 +356,14 @@ test('the real tests/security-floor.json matches this repo', () => {
   const res = spawnSync('node', [realScript], { cwd: repoRoot, encoding: 'utf8', env });
   assert.equal(res.status, 0, `${res.stdout}${res.stderr}`);
 });
+
+test("template/'s empty security floor is a valid starting state", () => {
+  // template/ sits outside every other gate's scope, so this is the only
+  // check that would notice its ratchet files rotting — e.g. someone deleting
+  // the empty manifest a scaffolded repo is supposed to start from.
+  const res = spawnSync('node', [realScript, '--root', path.join(repoRoot, 'template')], {
+    encoding: 'utf8',
+  });
+  assert.equal(res.status, 0, `${res.stdout}${res.stderr}`);
+  assert.match(res.stdout, /no SECURITY: tests declared/);
+});
