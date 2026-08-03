@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment / secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Platform auth state (session credentials) — NEVER commit.
+# Anchored to the repo root so a `src/auth/` source directory stays tracked.
+/auth/
+/whatsapp-auth/
+
+# Logs
+logs/
+*.log
+
+# Local model cache
+.cache/
+models/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

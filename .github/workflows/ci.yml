@@ -1,28 +1,139 @@
 name: CI
 
+# The same gate set community-agent runs, in the same three jobs, so code
+# extracted from there lands under the checks it already passed:
+#
+#   build                typecheck (incl. the tests ratchet) → migrate → test → build
+#   lint                 lint → format:check → context:check
+#   security-invariants  test:security, with the PR-base lowering guard
+#
+# One deliberate difference: this workflow enumerates NO application env vars.
+# community-agent's jobs carry a dummy CLAUDE_CODE_OAUTH_TOKEN / DISCORD_* /
+# WHATSAPP_PROVIDER block purely to satisfy that repo's import-time config
+# singleton, and the extraction plan calls that block out as something the base
+# should retire rather than template into every downstream repo. The base owns
+# no app config, so there is nothing to enumerate here — and when the runtime
+# arrives, config validation must stay scoped to the slice a given command
+# actually needs (community-agent's `src/config/boot.ts` is the precedent: it
+# validates db+log only, which is what let `npm run migrate` stop demanding an
+# OAuth token).
+
 on:
   push:
     branches: [main]
   pull_request:
+  # Merge queue: run the SAME required checks on the queue's temporary branch —
+  # main + the queued PR(s) merged together — so each PR is verified against
+  # the exact tree it will land as. Required if `main` ever turns on "Require
+  # merge queue": the queue blocks on these checks, so they MUST fire on
+  # `merge_group` or every merge would stall.
+  merge_group:
 
-permissions:
-  contents: read
-
+# Rapid pushes to a PR would otherwise stack redundant full CI runs.
+# Supersede-and-cancel applies to PR runs ONLY — pushes to main and merge-queue
+# runs always run to completion (a cancelled queue check would wedge the
+# queue). A superseded run concludes `cancelled`, not `failure`, so any
+# failure-keyed retry automation ignores it.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Least privilege: this workflow runs on `pull_request`, which includes forks
+# and executes attacker-controlled PR code (npm lifecycle scripts, test,
+# build). All three jobs are read-only, so pin the GITHUB_TOKEN to
+# `contents: read` rather than inheriting the repo/org default — one settings
+# change should not be able to re-widen what a fork-triggered run can do.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      # The lifted storage layer's tests run against this for real —
+      # repository.test.ts alone carries 117 SECURITY: cases. Same image and
+      # health-check shape community-agent uses, so DB-backed tests behave
+      # here exactly as they do there.
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agent_base_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/agent_base_test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # persist-credentials:false everywhere: no CI step needs a git credential
+      # after checkout, and `npm test` executes PR code, so the job token must
+      # not sit readable in .git/config.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm run format:check
+      # Apply the schema before the DB-backed tests. They SKIP cleanly when
+      # DATABASE_URL is unset, but with a reachable database and no schema they
+      # would fail on missing relations — so the migrate step is what makes
+      # "DB tests actually ran" true here rather than merely unverified.
+      - run: npm run migrate
       - run: npm test
       - run: npm run build
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      # Agent context-pack freshness (docs/agents/). A stale module map is worse
+      # than none — it sends a cold pipeline session confidently to a path that
+      # moved. Lives in the lint job because it is a pure static check: no DB,
+      # no model, milliseconds.
+      - run: npm run context:check
+
+  security-invariants:
+    # No postgres service here, deliberately: this job pins the security spine
+    # and must be deterministic regardless of DB reachability. DATABASE_URL is
+    # intentionally UNSET so DB-backed SECURITY tests skip cleanly rather than
+    # run against nothing; the count floor treats a skip the same as a pass, so
+    # the required count is stable across runners.
+    runs-on: ubuntu-latest
+    env:
+      # Base ref for the security-floor lowering guard. Empty on
+      # push/merge_group (guard inactive there); the PR base commit on
+      # pull_request. The `allow-security-floor-lower` label forces the
+      # override, so a genuine SECURITY-test removal is a conscious, labelled
+      # human act.
+      SECURITY_FLOOR_BASELINE_REF: ${{ github.event.pull_request.base.sha }}
+      ALLOW_SECURITY_FLOOR_LOWER: ${{ contains(github.event.pull_request.labels.*.name, 'allow-security-floor-lower') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history so the lowering guard can `git show <base>:…` the base
+          # manifest; a shallow clone wouldn't have the base commit.
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:security

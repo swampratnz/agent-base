@@ -13,7 +13,7 @@
  * declare tier requirements; the base derives the tool surface and re-asserts
  * tiers inside privileged handlers.
  */
-export type Tier = "guest" | "member" | "admin" | "super_admin";
+export type Tier = 'guest' | 'member' | 'admin' | 'super_admin';
 
 /**
  * Open platform identifier ('discord', 'whatsapp', ...). Deliberately a
@@ -40,12 +40,11 @@ export interface CallerContext {
 export type TurnStateBag = Map<string, unknown>;
 
 /** Priority classes for the offline-alert queue (eviction order). */
-export type AlertPriority = "system" | "low";
+export type AlertPriority = 'system' | 'low';
 
 export interface NotifyRequest {
   /** Built-in audiences, or a custom resolver returning user ids per platform. */
-  audience:
-    "superAdmins" | "admins" | ((platform: Platform) => Promise<string[]>);
+  audience: 'superAdmins' | 'admins' | ((platform: Platform) => Promise<string[]>);
   priority: AlertPriority;
   /** Optional sliding-window rate cap shared across call sites. */
   rateKey?: string;

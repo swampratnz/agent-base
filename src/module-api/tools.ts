@@ -1,11 +1,5 @@
-import type { z } from "zod";
-import type {
-  CallerContext,
-  NotifyRequest,
-  Platform,
-  Tier,
-  TurnStateBag,
-} from "./types.js";
+import type { z } from 'zod';
+import type { CallerContext, NotifyRequest, Platform, Tier, TurnStateBag } from './types.js';
 
 /**
  * The tool-hosting kernel the base exposes to every registered tool handler.
@@ -23,21 +17,13 @@ export interface ToolContext {
    * Wrap a privileged mutation: writes an audit row and echoes to super
    * admins. `actionKind` should be registered via AgentModule.auditActionKinds.
    */
-  audited(
-    actionKind: string,
-    params: Record<string, unknown>,
-    run: () => Promise<string>,
-  ): Promise<string>;
+  audited(actionKind: string, params: Record<string, unknown>, run: () => Promise<string>): Promise<string>;
   /**
    * Register a destructive action for the router-side CONFIRM flow instead of
    * executing it. The tier is re-asserted at confirm time; the description is
    * sanitized once by the base.
    */
-  requireConfirm(spec: {
-    description: string;
-    minTier: Tier;
-    execute(): Promise<string>;
-  }): string;
+  requireConfirm(spec: { description: string; minTier: Tier; execute(): Promise<string> }): string;
   notify(req: NotifyRequest): Promise<void>;
   turnState: TurnStateBag;
 }

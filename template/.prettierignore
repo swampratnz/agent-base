@@ -1,0 +1,11 @@
+dist/
+node_modules/
+package-lock.json
+
+# Docs are hand-formatted prose/tables; keep Prettier scoped to code.
+*.md
+
+# If your automation pushes with a token lacking the `workflows` GitHub App
+# scope, it can never fix a formatting failure under here. Drop this line if
+# yours does have the scope.
+.github/workflows/

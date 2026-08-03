@@ -1,0 +1,41 @@
+{
+  "name": "my-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TODO: one line — what this agent does and who it serves.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node dist/main.js",
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && npm run typecheck:tests",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
+    "test": "tsx --test tests/*.test.ts",
+    "_comment_gates": "The gate scripts ship inside @swampratnz/agent-base. `--root .` is required: without it they resolve their repo root inside node_modules.",
+    "test:security": "node node_modules/@swampratnz/agent-base/scripts/check-security-test-count.mjs --root .",
+    "test:security:fix": "node node_modules/@swampratnz/agent-base/scripts/check-security-test-count.mjs --root . --write",
+    "context:check": "node node_modules/@swampratnz/agent-base/scripts/check-context-pack.mjs --root .",
+    "context:fix": "node node_modules/@swampratnz/agent-base/scripts/check-context-pack.mjs --root . --write",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@swampratnz/agent-base": "^0.1.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.1.0",
+    "eslint": "^10.6.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.7.0",
+    "prettier": "^3.9.4",
+    "tsx": "^4.23.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62.1"
+  }
+}

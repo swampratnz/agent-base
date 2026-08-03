@@ -1,0 +1,18 @@
+dist/
+node_modules/
+package-lock.json
+
+# Docs are hand-formatted prose/tables; keep Prettier scoped to code for now
+# (same call as community-agent, so extracted docs don't churn on arrival).
+*.md
+
+# The new-agent repo template is copied OUT of this repo verbatim. Formatting
+# it here would be formatting someone else's future repo to this repo's rules
+# before they have a chance to choose; the template ships its own config.
+template/
+
+# This repo's automation pushes with a token that lacks the `workflows`
+# GitHub App scope, so it can never commit a change under .github/workflows/ —
+# excluded so format:check doesn't fail on files the pipeline is structurally
+# unable to fix.
+.github/workflows/

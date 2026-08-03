@@ -1,0 +1,109 @@
+name: CI
+
+# Runs the same gate set agent-base runs, in the same three jobs.
+#
+# ── When the reusable workflows exist ────────────────────────────────────────
+# agent-base's Phase 3 publishes the pipeline (and this gate set) as reusable
+# workflows. At that point this whole file collapses to a call:
+#
+#   jobs:
+#     ci:
+#       uses: swampratnz/agent-base/.github/workflows/ci-reusable.yml@v0
+#       with:
+#         node-version: 24
+#         needs-postgres: true
+#
+# It is written out longhand for now because that workflow does not exist yet,
+# and a template that references a missing workflow is a template that fails on
+# first push. Swap it over in one commit when it lands — the checks are
+# identical by construction, which is the point of writing them out from the
+# same source.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# `pull_request` includes forks and runs attacker-controlled code (npm
+# lifecycle scripts, the test suite). All three jobs are read-only.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: my_agent_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/my_agent_test
+      # Add ONLY the variables your commands genuinely need. Resist growing a
+      # dummy block for every var the app defines: each command should validate
+      # the config slice it uses, and a workflow enumerating an app's whole env
+      # is the smell that says it does not.
+    steps:
+      # No step needs a git credential after checkout, and `npm test` runs PR
+      # code — so the job token must not sit readable in .git/config.
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run context:check
+
+  security-invariants:
+    # DATABASE_URL intentionally UNSET: DB-backed SECURITY tests must skip
+    # cleanly rather than run against nothing. The count floor treats a skip as
+    # a pass, so the required count stays stable across runners.
+    runs-on: ubuntu-latest
+    env:
+      SECURITY_FLOOR_BASELINE_REF: ${{ github.event.pull_request.base.sha }}
+      ALLOW_SECURITY_FLOOR_LOWER: ${{ contains(github.event.pull_request.labels.*.name, 'allow-security-floor-lower') }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          # Full history so the lowering guard can read the base manifest.
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:security

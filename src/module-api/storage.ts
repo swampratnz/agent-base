@@ -1,4 +1,4 @@
-import type { Platform } from "./types.js";
+import type { Platform } from './types.js';
 
 /**
  * Minimal transaction-aware query surface, mirroring community-agent's
@@ -32,11 +32,7 @@ export interface MigrationFragment {
  */
 export interface PurgeContributor {
   purge(platform: Platform, userId: string, tx: Queryable): Promise<number>;
-  summarize?(
-    platform: Platform,
-    userId: string,
-    tx: Queryable,
-  ): Promise<string[]>;
+  summarize?(platform: Platform, userId: string, tx: Queryable): Promise<string[]>;
 }
 
 /**
@@ -47,17 +43,9 @@ export interface StorageLifecycleHooks {
   /** Fired when interactions are deleted/edited (retraction, retention, purge). */
   onInteractionsDeleted?(ids: readonly number[], tx: Queryable): Promise<void>;
   /** Fired inside removeMember's transaction (access must not outlive membership). */
-  onMemberRemoved?(
-    platform: Platform,
-    userId: string,
-    tx: Queryable,
-  ): Promise<void>;
+  onMemberRemoved?(platform: Platform, userId: string, tx: Queryable): Promise<void>;
   /** Fired when a roster row is marked as having left the platform. */
-  onRosterLeave?(
-    platform: Platform,
-    userId: string,
-    tx: Queryable,
-  ): Promise<void>;
+  onRosterLeave?(platform: Platform, userId: string, tx: Queryable): Promise<void>;
 }
 
 /**
@@ -66,4 +54,4 @@ export interface StorageLifecycleHooks {
  * 'trusted' provenance (e.g. first-party docs) may be served directly;
  * 'human-tier' inherits the trust of the authoring role.
  */
-export type ProvenanceTrust = "quarantined" | "trusted" | "human-tier";
+export type ProvenanceTrust = 'quarantined' | 'trusted' | 'human-tier';

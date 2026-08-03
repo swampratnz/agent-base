@@ -1,0 +1,91 @@
+{
+  // Typecheck gate for `tests/`, which the main tsconfig deliberately omits
+  // (`include: ["src/**/*.ts"]`) and which `tsx` never checks — it strips types
+  // and runs. In community-agent that gap hid a whole class of test bug: an
+  // injected-deps object that omits a field silently falls through to the REAL
+  // repository function, so a "unit" test quietly queries live Postgres, and
+  // because `node:test` runs test FILES in parallel those stray reads land on
+  // tables other files are counting. The same trap will exist here the moment
+  // the runtime and its DB-backed tests are extracted, so the ratchet is set up
+  // now, while the list is short enough to be complete.
+  //
+  // This is an INCREMENTAL RATCHET, not a big-bang switch: `include` lists only
+  // test files that are type-clean today. Adding a file is the unit of progress
+  // — bring it to zero errors, then list it here and it can never regress.
+  // Never delete an entry to turn a red build green.
+  //
+  // Listed alphabetically, one per line, so two PRs adding different files land
+  // in different hunks and merge cleanly (same reasoning as
+  // tests/security-floor.json's per-file entries).
+  //
+  // The list stopped being exhaustive when the extraction pass landed, which
+  // is exactly the case the ratchet exists for. Four lifted files carry
+  // pre-existing errors and are deliberately NOT listed:
+  //
+  //   knowledgeScope, usageAlertFailureTracker — their `{ mock: { module } }`
+  //     helper parameter type predates node:test's own
+  //     TestContext['mock']['module'] signature and no longer matches it;
+  //   repository — two unused destructured bindings under noUnusedLocals;
+  //   usageAlert, usageAlertFailureTracker — digest fixtures missing
+  //     `byPlatform`/`costByModel`, i.e. precisely the omitted-field trap the
+  //     header above describes.
+  //
+  // Bringing one to zero and listing it is the unit of progress. (`include` is
+  // never left literally empty: tsc errors with "No inputs were found" and the
+  // gate would fail for a reason that has nothing to do with test types.)
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // tests/ sits outside src/, so the shared rootDir has to widen for this
+    // project. noEmit means nothing is written regardless.
+    "rootDir": "."
+  },
+  "include": [
+    "src/**/*.ts",
+    "tests/accessRequestRetention.test.ts",
+    "tests/accessRequestRetentionIndependence.test.ts",
+    "tests/ackClassifier.test.ts",
+    "tests/backgroundJobHealth.test.ts",
+    "tests/budgetCheckFailureNotice.test.ts",
+    "tests/configSlices.test.ts",
+    "tests/contextPack.test.ts",
+    "tests/crashHandlers.test.ts",
+    "tests/createAgent.test.ts",
+    "tests/dbDegradation.test.ts",
+    "tests/dbPoolTimeouts.test.ts",
+    "tests/discordLink.test.ts",
+    "tests/embeddings.test.ts",
+    "tests/embeddingsDimMismatch.test.ts",
+    "tests/eventTime.test.ts",
+    "tests/gatedNotice.test.ts",
+    "tests/healthState.test.ts",
+    "tests/knowledgeCandidateDedupDegradation.test.ts",
+    "tests/knowledgeDuplicateDegradation.test.ts",
+    "tests/memberId.test.ts",
+    "tests/mergeKnowledgeEmbedCount.test.ts",
+    "tests/moderationRepo.test.ts",
+    "tests/moduleApi.test.ts",
+    "tests/mutedRoleAlertNotice.test.ts",
+    "tests/noticeCatalogue.test.ts",
+    "tests/notifications.test.ts",
+    "tests/pendingActions.test.ts",
+    "tests/pendingAlertQueue.test.ts",
+    "tests/provenanceTrust.test.ts",
+    "tests/rateReservation.test.ts",
+    "tests/redeploy.test.ts",
+    "tests/replyRetraction.test.ts",
+    "tests/rosterRetention.test.ts",
+    "tests/rosterRetentionIndependence.test.ts",
+    "tests/sanitizeName.test.ts",
+    "tests/schemaConstraintIdempotency.test.ts",
+    "tests/schemaFragmentEquivalence.test.ts",
+    "tests/secrets.test.ts",
+    "tests/securityFloorGate.test.ts",
+    "tests/storageLifecycle.test.ts",
+    "tests/textChunk.test.ts",
+    "tests/voiceTranscribe.test.ts",
+    "tests/whatsappCloudWire.test.ts",
+    "tests/whatsappLidMap.test.ts",
+    "tests/whatsappWire.test.ts"
+  ]
+}

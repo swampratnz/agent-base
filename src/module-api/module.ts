@@ -1,29 +1,10 @@
-import type { z } from "zod";
-import type { ToolDef } from "./tools.js";
-import type {
-  CommandDef,
-  JobSpec,
-  PostTurnHandler,
-  PreTurnIntercept,
-} from "./runtime.js";
-import type {
-  MigrationFragment,
-  PurgeContributor,
-  StorageLifecycleHooks,
-} from "./storage.js";
-import type { Persona, PromptSections, StringsPack } from "./presentation.js";
-import type {
-  AdapterFactory,
-  AdapterTextPack,
-  InboundContentPolicy,
-} from "./platform.js";
-import type {
-  DigestSignal,
-  IngestSource,
-  QueueProvider,
-  RefreshTopic,
-  SkillsManifest,
-} from "./content.js";
+import type { z } from 'zod';
+import type { ToolDef } from './tools.js';
+import type { CommandDef, JobSpec, PostTurnHandler, PreTurnIntercept } from './runtime.js';
+import type { MigrationFragment, PurgeContributor, StorageLifecycleHooks } from './storage.js';
+import type { Persona, PromptSections, StringsPack } from './presentation.js';
+import type { AdapterFactory, AdapterTextPack, InboundContentPolicy } from './platform.js';
+import type { DigestSignal, IngestSource, QueueProvider, RefreshTopic, SkillsManifest } from './content.js';
 
 /**
  * The manifest a module hands to `createAgent({ modules: [...] })`.

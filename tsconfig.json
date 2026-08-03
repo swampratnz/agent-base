@@ -4,6 +4,14 @@
     "module": "ES2022",
     "moduleResolution": "bundler",
     "lib": ["ES2022"],
+    // Explicit, unlike community-agent's tsconfig, which gets the Node globals
+    // only incidentally: nothing there sets `types`, and the ambient
+    // declarations arrive through a `/// <reference types="node" />` inside a
+    // runtime dependency's .d.ts (dotenv's). This package has no such
+    // dependency, so `node:test`/`node:assert` in tests would not resolve.
+    // Naming it here is both the fix and the honest form of what that repo
+    // relies on by accident.
+    "types": ["node"],
     "outDir": "dist",
     "rootDir": "src",
     "strict": true,
@@ -11,6 +19,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    // `true` (community-agent has `false`): this package is consumed as a
+    // published library, so the .d.ts files are the product.
     "declaration": true,
     "sourceMap": true,
     "noUnusedLocals": true,
