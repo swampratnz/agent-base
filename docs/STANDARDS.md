@@ -9,20 +9,25 @@ A short, human-facing page. For the security invariants see
 
 Style is enforced by `eslint.config.js` and Prettier — run `npm run lint` and
 `npm run format:check` before opening a PR; don't hand-debate in review what
-the config already settles. Both configs mirror community-agent's, so code
-moving here by extraction lands under the rules it was written against. If you
-change one, change it there too, or the next extraction PR goes red on style
-rather than substance.
+the config already settles. Both configs mirror community-agent's, which is
+where this code came from. Keep them in step: a straggler moving in either
+direction should land under the rules it was written against, not go red on
+style rather than substance.
 
 ## The full gate
 
 ```
 npm run typecheck && npm run lint && npm run format:check \
-  && npm test && npm run build && npm run context:check && npm run test:security
+  && npm run migrate && npm test && npm run build \
+  && npm run context:check && npm run test:security
 ```
 
 CI runs exactly this, in three jobs. Run it before opening or updating a PR —
 a red PR only makes rework.
+
+`migrate` needs `DATABASE_URL` on a Postgres 16 + pgvector database and nothing
+else. Use your **own** database, never a sibling repo's: `node:test` runs test
+FILES in parallel, so concurrent runs corrupt each other's fixtures.
 
 ## Tests
 
@@ -77,7 +82,8 @@ one of them false is a broken change:
 
 - **[MODULE-API.md](MODULE-API.md)** must stay true against real code. It
   documents what a module implements; a stale signature there is worse than no
-  document, because someone will build against it.
+  document, because someone will build against it — and since the package is
+  published, "someone" is a repo you cannot fix.
 - **[SECURITY.md](SECURITY.md)** must gain a note whenever a change adds,
   removes or moves anything on the security spine, or introduces a new input,
   egress or trust boundary.

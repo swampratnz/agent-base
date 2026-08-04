@@ -2,59 +2,45 @@ name: Canary — build community-agent against agent-base HEAD
 
 # The cross-repo versioning mitigation from the extraction plan's risk list.
 #
-# Once the split lands, a base change that community-agent needs becomes
-# publish → bump: two repos, two merges, and a window in which HEAD here is
-# silently incompatible with the only consumer. This job closes that window by
-# building the consumer against THIS commit — no publish, no version bump: the
-# base is packed with `npm pack` and installed into community-agent's tree as a
-# local tarball, then community-agent's own typecheck + test + build run.
+# A base change that community-agent needs is publish → bump: two repos, two
+# merges, and a window in which HEAD here is silently incompatible with the
+# only consumer. This job closes that window by building the consumer against
+# THIS commit — no publish, no version bump: the base is packed with
+# `npm pack` and installed into community-agent's tree as a local tarball,
+# then community-agent's own typecheck + migrate + test + build run.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# IT WILL NOT PASS UNTIL COMMUNITY-AGENT CONSUMES THE PACKAGE, AND THAT IS
-# EXPECTED.
+# IT IS ON, AND A RED RUN IS A REAL SIGNAL
 # ─────────────────────────────────────────────────────────────────────────────
-# The extraction has now landed on THIS side: `src/` is the base runtime and
-# `npm pack` produces a real, installable package. community-agent still has
-# its own `src/base/`, still declares no dependency on
-# `@swampratnz/agent-base`, and still supplies the community values this repo
-# removed. So the canary installs the tarball and then measures the gap
-# (`Report what a green canary still needs`) rather than pretending to be
-# green. What a green run requires on the consumer side:
+# Both sides of the flip have landed: `src/` here is the base runtime and
+# `npm pack` produces a real installable package, and community-agent has
+# deleted its `src/base/`, declared the dependency, composed through
+# `createAgent`, and taken over the community values this repo stopped
+# shipping. So the gap report below (`Report what a green canary still needs`)
+# now prints ✅ on both lines, and the steps after it genuinely exercise this
+# package rather than the consumer's own tree.
 #
-#   1. delete `src/base/`, add `"@swampratnz/agent-base": "<version>"` as a
-#      dependency, and repoint every `src/module/**` import from
-#      `../../base/x.js` to `@swampratnz/agent-base`;
-#   2. replace the composition root's side-effect imports with
-#      `createAgent({ modules: [nzCommunityModule] })`;
-#   3. supply the values base stopped shipping — the notice pack must now
-#      cover `gatedNoticeWithAdmins` and `guidelinesHeading` as well as every
-#      other id in `BASE_NOTICE_IDS`; `DISPLAY_TIMEZONE=Pacific/Auckland`,
-#      `DISPLAY_LOCALE=en-NZ`, `DOCS_INGEST_INDEX_URL` and
-#      `STATUS_CHECK_API_URL` move to env; `ModulePromptSections` takes
-#      `conductGuidance` plus the `responseStyleSections`/
-#      `languagePreferenceSections` maps instead of
-#      `communityConduct`/`plainLanguageStyle`/`enLanguagePreference`/
-#      `miLanguagePreference`; the router deps are
-#      `getConductGuidelinesFn`/`getLocalisedConductGuidelinesFn`/
-#      `buildDigestContentFn`; and `communityTurnState.ts` drops the five
-#      `TurnStateBag` keys base now declares itself;
-#   4. keep its own community schema fragments, contributed through
-#      `AgentModule.migrations` rather than the base manifest.
+# That means: when this job goes red, this commit broke the consumer. Read the
+# failing step, not the header. The usual causes are a changed registration
+# shape (the prompt-section slot set and the notice-id floor are the two that
+# bite), a new required env var, or a schema fragment that does not replay.
 #
-# Rather than let a known-premature check red the repo, the job is gated
-# behind a repository VARIABLE:
+# The job is gated behind a repository VARIABLE, which is SET:
 #
 #     Settings → Secrets and variables → Actions → Variables
 #     AGENT_BASE_CANARY_ENABLED = true
 #
-# Unset (the default), the job skips — the workflow stays green and schedulable.
-# Turn it on in the same change that makes community-agent consume this
-# package, and from then on a red canary is a real signal, not noise. A manual
-# run can bypass the gate with the `force` input, which is how you try it out
-# before flipping the variable.
+# Unset, the job skips. That was the default while the flip was in progress;
+# turning it off again is the off switch if the consumer is ever mid-migration.
+# A manual run can bypass the variable with the `force` input.
+#
+# It runs on a daily cron (see `schedule` below) rather than per-commit,
+# because it builds an entire second repository against a real database. A
+# nightly red is therefore attributable to a day's worth of commits, not one —
+# `workflow_dispatch` with a `ref` is how you bisect.
 #
 # Deliberately NOT `continue-on-error`: an always-green canary is worse than no
-# canary. The variable is the off switch; once it is on, failure means failure.
+# canary. The variable is the off switch; while it is on, failure means failure.
 #
 # The local-tarball mechanism below stays as it is once the package is
 # published (see docs/RELEASING.md). Its whole value is that it works on a
@@ -198,12 +184,12 @@ jobs:
             if node -e 'const p=require("./package.json");process.exit((p.dependencies||{})["@swampratnz/agent-base"]?0:1)'; then
               echo "- community-agent DECLARES a dependency on \`@swampratnz/agent-base\` ✅"
             else
-              echo "- community-agent does NOT declare \`@swampratnz/agent-base\` yet — the steps below"
-              echo "  exercise its own tree, not this package. See the header of this workflow for"
-              echo "  the follow-up PR's checklist."
+              echo "- community-agent does NOT declare \`@swampratnz/agent-base\` — REGRESSION: it did."
+              echo "  The steps below are exercising its own tree, not this package, so a green run"
+              echo "  proves nothing. Fix the consumer before trusting this job again."
             fi
             if [ -d src/base ]; then
-              echo "- \`src/base/\` still exists there ($(find src/base -type f | wc -l) files) — it is the copy this package replaces."
+              echo "- \`src/base/\` exists there again ($(find src/base -type f | wc -l) files) — REGRESSION: that is the copy this package replaces, and a local copy forks it silently."
             else
               echo "- \`src/base/\` is gone ✅"
             fi

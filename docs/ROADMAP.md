@@ -9,41 +9,44 @@ repo's side.
 
 ## Strategy
 
-**Strangle in place, extract last.** The runtime seams are reified inside
+**Strangle in place, extract last.** The runtime seams were reified inside
 `community-agent` first, where its ~200 test files, security-test floor and
-pipeline adjudicate every step. This repo starts as the _contract_ those
-refactors code against, then receives the runtime by extraction — never by
-greenfield rewrite.
+pipeline adjudicated every step. This repo started as the _contract_ those
+refactors coded against, then received the runtime by extraction — never by
+greenfield rewrite. That extraction has landed and the package is published, so
+the strategy question now is the reverse one: a base change is made here and
+reaches the consumer as a version bump.
 
 ## Phases
 
 | Phase | What                                                                                                                                                        | Where           | Status               |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | -------------------- |
 | 0     | Decisions: distribution (npm + reusable workflows), naming, module API v0                                                                                   | here            | **done** — this seed |
-| 1     | Reify the seams: tool registry, config slices, storage fragments + hooks, job registry, strings catalogue, router intercepts, prompt slots, adapter factory | community-agent | **largely landed**   |
-| 2     | Two packages in one repo (`src/base/` / `src/module/`), one-way import rule                                                                                 | community-agent | not started          |
-| 3     | Extract: runtime packages, gate scripts, pipeline as reusable workflows, repo template                                                                      | here            | **in progress**      |
+| 1     | Reify the seams: tool registry, config slices, storage fragments + hooks, job registry, strings catalogue, router intercepts, prompt slots, adapter factory | community-agent | **landed**, and lifted here |
+| 2     | Two packages in one repo (`src/base/` / `src/module/`), one-way import rule                                                                                 | community-agent | **done, then superseded** — the split landed and the extraction then removed `src/base/` entirely; the one-way gate now enforces that it stays gone |
+| 3     | Extract: runtime packages, gate scripts, pipeline as reusable workflows, repo template                                                                      | here            | **largely done** — runtime, gates and template shipped, `0.1.0`/`0.1.1` published; the pipeline as reusable workflows has not started |
 | 4     | Prove the seams: scaffold the personal-finance agent from the template                                                                                      | new repo        | not started          |
 
-### Where Phase 1 actually stands
+### Where the seams actually stand
 
-Read from community-agent's `src/` rather than from anyone's status report.
+Read from `src/` rather than from anyone's status report.
 `docs/MODULE-API.md` has the signatures and the full breakdown; in summary:
 
-- **Live registries**: tool registry (`defineTool` + derived tier arrays,
-  tool-server parts and feature-flag predicates), storage lifecycle hooks
-  (purge contributors, interactions-invalidated, member-removed, roster-leave),
-  provenance→trust, policy keys, the notice catalogue with open locale axes,
-  prompt sections (a **closed** slot set), personas, the skills manifest, the
-  command registry, the router's pre-turn intercept and post-turn handler
-  registries, turn-state finalizers, and the job registry.
-- **Partial**: config (per-domain slices exist and a boot slice already lets
-  `migrate` run on `DATABASE_URL` alone, but `config` is still an import-time
-  singleton with no per-module schema); migrations (fragments + an ordered
-  manifest, but one static list rather than per-module contributions);
-  adapters (open `Platform`, capability-derived tool availability enforced at
-  startup — but the descriptor and factory lists are static and `create()`
-  still reads the config singleton).
+- **Live** — a module supplies these through the `AgentModule` manifest and
+  `createAgent` registers them: tool-server parts, tool tiers and feature-flag
+  predicates; the notice pack (with open locale axes); prompt sections (a
+  **closed** slot set); personas; the skills manifest; commands; the default
+  moderation term list; policy keys; provenance→trust; purge contributors and
+  the other storage lifecycle hooks; pre-turn intercepts, post-turn handlers
+  and turn-state finalizers; and schema fragments.
+- **Partial** — the mechanism is base's but the wiring is still the
+  composition root's, not a manifest field: config (per-domain slices, and a
+  boot slice that lets `migrate` run on `DATABASE_URL` alone, but `config` is
+  an import-time singleton with no per-module schema); jobs (`JobSpec` and the
+  start/stop sweeps, but the list is passed to `startRegisteredJobs`);
+  adapters (open `Platform`, capability-derived availability — but the
+  descriptor and factory lists are static and `create()` reads the config
+  singleton).
 - **Not started**: moderation policy, digest/queue registries, ingest sources
   and refresh topics, per-credential secret registration.
 
@@ -62,28 +65,37 @@ part of the move; and `createAgent({ modules })` was written, so composition is
 an ordered, fail-closed call rather than an import list.
 
 Then the publishing story: MIT licensing, `package.json` made publish-ready
-(`0.1.0`, the `files` allowlist verified against a real `npm pack`,
-`publishConfig` pointed at public npm) and a tag-triggered publish workflow
-that runs the full gate, refuses a tag that disagrees with `package.json`, and
-authenticates by **trusted publishing (OIDC)** — no npm token exists in this
-repository at all, and provenance is generated automatically. Nothing is
-published yet, and the FIRST release deliberately cannot come through that
-workflow: npm will not configure a trusted publisher for a package that does
-not exist, so `0.1.0` is a one-time manual publish. See
-[`RELEASING.md`](RELEASING.md) for that bootstrap and the owner-only
-prerequisites around it.
+(the `files` allowlist verified against a real `npm pack`, `publishConfig`
+pointed at public npm) and a tag-triggered publish workflow that runs the full
+gate, refuses a tag that disagrees with `package.json`, and authenticates by
+**trusted publishing (OIDC)** — no npm token exists in this repository at all,
+and provenance is generated automatically.
 
-Still to come: the pipeline as reusable workflows, the consumer-side follow-up
-in community-agent that makes the canary meaningful, and the 0.1.0 tag itself
-once that is green.
+**`0.1.0` shipped on 2026-08-03**, by hand, because npm will not configure a
+trusted publisher for a package that does not exist. The publisher was then
+configured against it and **`0.1.1` shipped through the workflow the same day**,
+which is what proved the credential-free path end to end. `0.1.1` exists
+because the first real consumer found two blockers in `0.1.0`: the subpath
+exports were missing, so nothing past the barrel was importable, and
+`toolServerParts` was typed `ToolServerParts<never>`, which no module could
+satisfy. See [`RELEASING.md`](RELEASING.md).
+
+Then the consumer flip: community-agent deleted its `src/base/`, took the
+dependency, and composed through `createAgent`. The canary is on and green.
+
+Still to come: the pipeline as reusable workflows (this repo ships none today —
+only `ci.yml`, `publish.yml` and the canary), and Phase 4.
 
 ## Contract stability
 
-The module API here is **v0 and expected to move**. While Phase 1 is
-underway, `community-agent` is authoritative: when a seam lands there with a
-different shape than this contract guessed, the contract changes to match
-(same-diff where practical). Consumers other than community-agent should not
-build against this package before Phase 3 tags a 0.1.0.
+The module API is **v0 and expected to move**. `0.1.x` is published and
+installable, and a second consumer is welcome to build against it — but while
+the major is `0`, a breaking change to the module API is a **minor** bump, and
+there will be some: `src/module-api/`'s types and `createAgent`'s live
+`AgentModule` still disagree in the ways
+[MODULE-API.md's contract-vs-code table](MODULE-API.md#contract-vs-code)
+records, and reconciling them is a breaking change by construction (issue #10).
+Pin an exact version if that matters to you.
 
 ## Phase 0 decisions of record
 

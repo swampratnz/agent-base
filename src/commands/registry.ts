@@ -15,12 +15,16 @@ import type {
 } from '../storage/repository.js';
 
 // The base command-registry MECHANISM (agent-base plan §Phase-2 Stage 3a):
-// the sentinel, the handler/binding/command types, the fail-loud
-// registration slot the community command list (src/module/commands.ts) registers
-// itself into at its own module's import time, and the Discord late-binding
-// hook. No command content lives here — the router's WhatsApp `!` intercept
-// and Discord slash registration both read whatever list was registered, so
-// neither mechanism file imports the community commands module.
+// the sentinel, the handler/binding/command types, the fail-loud registration
+// slot `createAgent` fills from `AgentModule.commands`, and the Discord
+// late-binding hook. No command content lives here — the router's WhatsApp `!`
+// intercept and Discord slash registration both read whatever list was
+// registered, so neither mechanism file imports a module's commands.
+//
+// The two steps happen at different TIMES, and the gap is load-bearing:
+// `registerCommands` runs inside `createAgent`, from the composition root's
+// body; `bindDiscordCommand` must therefore run later still. Neither can
+// happen at a module's own import time — see `bindDiscordCommand` below.
 
 /**
  * The injected repository/policy reads a WhatsApp text-command handler
@@ -109,21 +113,25 @@ export interface RegisteredCommand {
    * floor in either handler.
    */
   whatsapp?: WhatsAppTextCommandHandler;
-  /** Bound by slashCommands.ts at Discord module load (`bindDiscordCommand`) — see the file doc above. */
+  /**
+   * Attached in place by `bindDiscordCommand`, AFTER `createAgent` has
+   * registered the list — never at a module's import time. Absent until then,
+   * which is why every reader here skips an unbound entry rather than
+   * assuming one.
+   */
   discord?: DiscordCommandBinding;
 }
 
 let registered: readonly RegisteredCommand[] | undefined;
 
 /**
- * Register THE command list — called exactly once, by the community commands
- * module (src/module/commands.ts) at its own module scope, mirroring
- * `registerNoticePack`/`registerToolTiers`. Double registration throws (two
- * modules both claiming to be the command list is a wiring bug, never a
- * merge), and the stored list is a frozen shallow copy so no later mutation
- * of the caller's array can change what the dispatchers see —
- * `bindDiscordCommand` below attaches each entry's Discord half in place,
- * which a shallow freeze deliberately still permits.
+ * Register THE command list — called exactly once, by `createAgent` from
+ * `AgentModule.commands`, mirroring `registerNoticePack`/`registerToolTiers`.
+ * Double registration throws (two modules both claiming to be the command
+ * list is a wiring bug, never a merge), and the stored list is a frozen
+ * shallow copy so no later mutation of the caller's array can change what the
+ * dispatchers see — `bindDiscordCommand` below attaches each entry's Discord
+ * half in place, which a shallow freeze deliberately still permits.
  */
 export function registerCommands(commands: readonly RegisteredCommand[]): void {
   if (registered) {
@@ -136,8 +144,17 @@ export function registerCommands(commands: readonly RegisteredCommand[]): void {
  * The registered command list, for the two command surfaces (the router's
  * WhatsApp `!` intercept and Discord slash registration/dispatch). Fails
  * LOUD — never an empty roster — when no list has been registered: silence
- * here would mean every command quietly stopped matching because a
- * composition root forgot the side-effect import.
+ * here would mean every command quietly stopped matching because no module
+ * supplied `commands`.
+ *
+ * In practice the throw is far more often an ORDERING fault than a missing
+ * registration: something read the list before `createAgent` filled it. See
+ * `bindDiscordCommand` below.
+ *
+ * NOTE: the thrown message still names a consumer path
+ * (`src/module/commands.ts`) and advises importing it, which is now the wrong
+ * fix — the list arrives via `AgentModule.commands`. Correcting the string is
+ * a behaviour change, so it is left for its own diff.
  */
 export function registeredCommands(): readonly RegisteredCommand[] {
   if (!registered) {
@@ -150,9 +167,20 @@ export function registeredCommands(): readonly RegisteredCommand[] {
 }
 
 /**
- * Attach a command's Discord half. Called from slashCommands.ts at module
- * scope, once per command; rejects unknown names (a binding must correspond
- * to a registry entry that declares the discord platform) and double binds.
+ * Attach a command's Discord half, once per command. Rejects unknown names (a
+ * binding must correspond to a registry entry that declares the discord
+ * platform) and double binds.
+ *
+ * ⚠️ **Call this AFTER `createAgent`, never at module scope.** It reads the
+ * registered list through `registeredCommands()`, and that list is registered
+ * by `createAgent` when the composition root's BODY runs — after every module
+ * in its static import graph has already been evaluated. A module-scope call
+ * therefore always runs first and throws `registeredCommands: no command list
+ * registered`, taking the process down at startup (community-agent#961).
+ * Export a `bind*()` function instead and call it from a point the
+ * composition root reaches after `createAgent` returns; adapter construction
+ * is the natural one. Make it idempotent, because a duplicate bind throws and
+ * tests build adapters more than once per process.
  */
 export function bindDiscordCommand(name: string, binding: DiscordCommandBinding): void {
   const command = registeredCommands().find((c) => c.name === name && c.platforms.includes('discord'));

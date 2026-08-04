@@ -1,16 +1,15 @@
 # Architecture
 
-**Skeleton.** The subsystems below are described by their *contract* — what
-they own, what they must not do, and where the seam to a module is. The code
-lands by extraction from
+The subsystems below are described by their *contract* — what they own, what
+they must not do, and where the seam to a module is. All of them are here: the
+runtime arrived by extraction from
 [`swampratnz/community-agent`](https://github.com/swampratnz/community-agent)
-(see [ROADMAP.md](ROADMAP.md)), and each section gets filled in by the diff
-that brings its code across. Sections marked _(not here yet)_ describe the
-intended arrival, not something you can import today.
+(see [ROADMAP.md](ROADMAP.md)).
 
-For the base↔module boundary in detail, read [MODULE-API.md](MODULE-API.md) —
-it is written against real code and is the more useful document until the
-extraction lands.
+This page is the shape. For the base↔module boundary signature by signature,
+read [MODULE-API.md](MODULE-API.md); for which file holds what, read
+[agents/module-map.md](agents/module-map.md), which is gated against the tree
+and therefore cannot drift.
 
 ---
 
@@ -23,8 +22,8 @@ inbound message
 platform adapter ─── normalises to IncomingMessage
    │
    ▼
-router · pre-turn spine    block → role → gate → CONFIRM → pause → rate → budget
-   │                        (frozen order; module intercepts append AFTER it)
+router · pre-turn spine    13 frozen steps, block-list → … → auto-answer-thread
+   │                        (PRE_TURN_SPINE; module intercepts append AFTER it)
    ▼
 turn engine ─── system prompt (base spine + registered sections + persona voice)
    │            tool surface derived from the caller's tier
@@ -47,7 +46,7 @@ migration, hooks into the storage lifecycles.
 
 ## Subsystems
 
-### `agent/` — turn engine, prompt assembly, tool hosting _(not here yet)_
+### `agent/` — turn engine, prompt assembly, tool hosting
 
 Builds the per-turn query options and runs the turn. Owns:
 
@@ -63,7 +62,7 @@ Builds the per-turn query options and runs the turn. Owns:
 - the **outbound filter** — deterministic secret redaction and content policy
   on every send path.
 
-### `platforms/` — adapters and the platform registry _(not here yet)_
+### `platforms/` — adapters and the platform registry
 
 The `PlatformAdapter` contract plus the concrete adapters, split into two
 layers by import weight: lightweight *descriptors* (platform id, member-id
@@ -76,7 +75,7 @@ capabilities rather than hand-mirrored.
 Also here: outbound text chunking, delivery-window handling, and the
 adapter text packs that keep deployment prose out of adapter code.
 
-### `storage/` — pool, embeddings, migrations, lifecycles _(not here yet)_
+### `storage/` — pool, embeddings, migrations, lifecycles
 
 A single pool with explicit query/connection bounds, the embedding provider,
 and a migrator that concatenates idempotent SQL fragments and applies them as
@@ -89,41 +88,45 @@ removal, roster departure) are **registries with explicit ordering**, so each
 domain owns its own rows and no module hard-codes another's tables. Iteration
 order comes from a declared `order`, never from module load order.
 
-### `runtime/` — router, scheduler, notifications, health _(not here yet)_
+### `src/` root — router, scheduler, notifications, health
 
-The router spine (fixed, frozen, non-reorderable), the job scheduler (tracked
-runs, re-entrancy latch, consecutive-failure alerting, cost recording, one
-shutdown sweep), the notification service, the notice catalogue with its
-locale/style precedence, retention sweeps, budget accounting and crash
-handlers.
+There is no `runtime/` directory and there is not going to be one: these sit at
+the `src/` root, next to `createAgent.ts`. The router spine (fixed, frozen,
+non-reorderable — `router.ts` and `routerIntercepts.ts`), the job mechanism
+(`jobs/`: tracked runs, re-entrancy latch, consecutive-failure alerting, cost
+recording, one shutdown sweep), the notification service, the notice catalogue
+with its locale/style precedence (`strings/`), retention sweeps, budget
+accounting and crash handlers.
 
-### `module-api/` — the contract **(here now)**
+### `module-api/` — the v0 contract
 
-The `AgentModule` manifest and its component types. Types only: no runtime, no
-enforcement. See [MODULE-API.md](MODULE-API.md) and
-[`../src/module-api/`](../src/module-api/).
+Types only: no runtime, no enforcement. It describes the seams whose runtime is
+not reified as registration yet. The manifest `createAgent` actually takes is
+in `createAgent.ts`; where the two disagree, that one runs. See
+[MODULE-API.md](MODULE-API.md) and [`../src/module-api/`](../src/module-api/).
 
 ---
 
 ## Composition
 
-The intended entry point is
+The entry point is
 
 ```ts
-await createAgent({ modules: [myModule] });
+const agent = await createAgent({ modules: [myModule] });
+await agent.start(() => startAdaptersAndJobs());
 ```
 
-which parses config (base slices plus each module's slice), runs migrations
-(base fragments first, then modules in registration order, one atomic query),
-constructs the adapters the deployment enables, wires the registered tools /
-jobs / intercepts / handlers / commands, and installs one shutdown sweep.
+`createAgent` plans the composition purely, runs each module's `init`, performs
+the singleton then additive registrations in a frozen order, and probes that
+the registries took them — returning nothing at all if any required
+registration is missing. `start()` runs the migrations (base fragments first,
+then each module's, one atomic query) and then the caller's callback.
 
-**That function does not exist yet.** In community-agent today the composition
-root performs side-effect imports of the module-owned registration files
-before anything that could run a turn, and every registry fails closed if its
-file was never imported. `createAgent` is the extraction pass's job; the
-ordering constraints it must preserve are documented in
-[MODULE-API.md](MODULE-API.md).
+What it does **not** do yet, and the shape of the remaining work: config is
+still an import-time singleton rather than a per-module slice parsed here, and
+adapter construction, job starting and the shutdown sweep are still the
+deployment's own callback rather than manifest fields. Each of those is a
+seam marked `planned` or `partial` in [MODULE-API.md](MODULE-API.md).
 
 ---
 

@@ -38,12 +38,21 @@ pack and one of those disagree, **they win and this pack has a bug**.
 
 ## A note on this repo specifically
 
-The map is short because the tree is. Most of what a session needs to know
-lives in the *other* repo right now: this one holds the contract, the gates and
-the docs, and the runtime arrives by extraction. If you are looking for how
-something actually behaves today, it is in `swampratnz/community-agent` — and
-[`../MODULE-API.md`](../MODULE-API.md) is the map to it, written against that
-repo's real code with the plan-vs-code differences called out.
+**How something behaves is answered here.** The extraction has landed: the
+runtime is in `src/`, the package is on npm, and `swampratnz/community-agent`
+consumes it rather than carrying its own copy. So a base question is a question
+about a file in this tree, and [`module-map.md`](module-map.md) names 70 of
+them.
+
+Two things still live in the consumer, and reading them here wastes a session:
+the CONTENT (tools, prose, personas, notice text, jobs, adapters' factory list)
+and the composition that assembles it. `docs/MODULE-API.md` marks which is
+which and flags every consumer path as such.
+
+The other direction matters too: a base change reaches community-agent as a
+version bump, and the canary workflow builds that repo against this commit
+nightly. If your change breaks the consumer, this repo finds out — which is why
+a base fix belongs here and never downstream.
 
 ## Keeping it honest
 

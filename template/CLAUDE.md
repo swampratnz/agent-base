@@ -37,8 +37,11 @@ This bot may process untrusted public chat. Preserve these, all inherited:
   surface is tier-derived; privileged tools re-assert the tier.
 - Destructive actions are CONFIRM-gated and executed by the router, not the
   model.
-- Outbound filtering (secret redaction + policy) is on every send path. Every
-  new outward credential goes into the module's `runtimeSecrets`.
+- Outbound filtering (secret redaction + policy) is on every send path. The
+  exact-value secret list it redacts is the BASE's `runtimeSecrets()`, which a
+  module cannot add to today — so an outward credential of your own must be
+  redacted at your own send site, and named as a residual risk in
+  `docs/SECURITY.md` until the per-credential registration seam lands.
 - Admin data access is scoped in SQL to conversations the admin is in.
 
 Anything you add that touches one of these needs a `SECURITY:`-prefixed test.
@@ -47,11 +50,12 @@ Anything you add that touches one of these needs a `SECURITY:`-prefixed test.
 
 ```
 npm run typecheck && npm run lint && npm run format:check \
-  && npm test && npm run build \
+  && npm run migrate && npm test && npm run build \
   && npm run context:check && npm run test:security
 ```
 
-All green before opening or updating a PR; CI runs the same set.
+All green before opening or updating a PR; CI runs the same set. `migrate`
+needs `DATABASE_URL` pointed at Postgres 16 + pgvector and nothing else.
 
 Three ratchets, each of which will fail a PR that forgets its companion file:
 

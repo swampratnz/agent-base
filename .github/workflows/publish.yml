@@ -60,16 +60,18 @@ name: Publish to npm
 #     workflow ("never use caching in release builds").
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# THE FIRST RELEASE DOES NOT COME THROUGH HERE
+# THE FIRST RELEASE DID NOT COME THROUGH HERE
 # ─────────────────────────────────────────────────────────────────────────────
-# npm cannot configure a trusted publisher for a package that does not exist
-# yet: the npmjs.com UI only offers the setting on an existing package
-# (npm/cli#8544, open). So v0.1.0 must be published BY HAND from a clean
-# checkout of the tag, with an interactive `npm login`, and only then can the
-# trusted publisher be configured — after which every subsequent release runs
-# through this workflow with no credential anywhere. docs/RELEASING.md has the
-# exact commands. Until that bootstrap happens, a real run of this workflow
-# will fail at `npm publish`, and that is expected rather than a defect.
+# npm cannot configure a trusted publisher for a package that does not exist:
+# the npmjs.com UI only offers the setting on an existing package
+# (npm/cli#8544). So 0.1.0 was published BY HAND from a clean checkout of the
+# tag on 2026-08-03, the trusted publisher was configured against it, and
+# 0.1.1 went out through this workflow the same day with no credential
+# anywhere. That bootstrap is DONE and does not recur — a run of this workflow
+# that fails to authenticate now is a real fault, most likely the npmjs
+# trusted-publisher setting having been changed. See docs/RELEASING.md's
+# "When a release fails to authenticate". The one lasting trace is that 0.1.0
+# carries no provenance attestation, having come from a laptop rather than CI.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # DRY RUN
@@ -77,10 +79,9 @@ name: Publish to npm
 # `workflow_dispatch` defaults to a dry run, and the dry-run path runs
 # EVERYTHING — every gate, the tarball contents check, and
 # `npm publish --dry-run` — so the whole release can be exercised before any
-# version is burned. A dry run does not authenticate at all, so it works today,
-# before the bootstrap publish and before any trusted publisher exists. What it
-# therefore cannot exercise is the OIDC exchange itself; docs/RELEASING.md says
-# so rather than pretending otherwise.
+# version is burned. A dry run does not authenticate at all, so it can be run
+# from any branch at any time. What it therefore cannot exercise is the OIDC
+# exchange itself; docs/RELEASING.md says so rather than pretending otherwise.
 
 on:
   push:

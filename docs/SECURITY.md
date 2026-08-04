@@ -1,12 +1,16 @@
 # Security — the base spine
 
-This document has two halves, because agent-base ships two things:
+This document has two halves:
 
 1. **The runtime spine** — the invariants the framework enforces on behalf of
    every agent built on it, and which nothing a module registers may weaken.
-2. **The pipeline threat model** — the trust boundaries inside the multi-loop
-   development pipeline the reusable workflows carry, which is a security
-   surface in its own right even though it touches no member data.
+2. **The development pipeline's threat model** — the trust boundaries inside
+   the multi-loop agent pipeline that develops these repositories. That
+   pipeline lives in `swampratnz/community-agent`'s workflows today, not here;
+   §3 is written down in this repo because the extraction plan intends to ship
+   it as reusable workflows, and because the same controls apply to any repo
+   that adopts it. **This repository ships no reusable workflows** — only
+   `ci.yml`, `publish.yml` and the canary.
 
 The runtime half is **live code now**: the enforcement points were extracted
 from
@@ -47,17 +51,23 @@ Named generically, because the concrete list is per-agent:
    roles, or otherwise act on a platform under the bot's identity.
 5. **The repository itself** — the pipeline can write code; see §3.
 
-Every module registers its own credentials into the outbound redaction
-backstop (invariant 4). A credential the base does not know about is a
-credential the DLP layer cannot redact.
+A credential the base does not know about is a credential the DLP layer cannot
+redact — and today the base's list is **hand-written and base-only**
+(`src/agent/secrets.ts`'s `runtimeSecrets()`, reading the config singleton). A
+module cannot add to it. So: every new BASE credential must be added to that
+function by hand in the same diff that introduces it, and a module's own
+outward credential is not covered at all — it must be redacted at its own send
+site and recorded as a residual risk in that deployment's SECURITY.md. See
+invariant 4.
 
 ---
 
 ## 2 · Runtime invariants the base owns
 
-These are the non-negotiables the module API is designed around. No contract
-change may weaken one by accident; that is why this section exists at contract
-stage rather than waiting for the code.
+These are the non-negotiables the module API is designed around, and they are
+live code in `src/`. No contract change and no new registration point may
+weaken one by accident — which is the test to apply to a proposed extension
+point, not "is it generic?".
 
 ### 1. Tool lockdown
 
@@ -109,8 +119,13 @@ cannot forge a pending-action notice.
 Every send path passes the base outbound filter: exact-value secret redaction
 plus content policy. Module string packs and adapter text packs supply
 *content*; they return plain strings that the base still filters, so a pack can
-never route around it. Modules register their credentials so the DLP backstop
-covers unknown egress paths, not just the one send site that redacts today.
+never route around it.
+
+The redacted value list is the backstop for egress paths nobody thought of,
+rather than for the one send site that already redacts. **Planned:** a
+`registerRuntimeSecret()` per credential, so a module can contribute its own.
+What exists is a hand-written `runtimeSecrets()` listing base credentials only,
+which must be updated by hand — see §1.
 
 ### 5. Scoped reads
 
@@ -129,11 +144,28 @@ with better manners.
 
 ### 7. Fixed router spine
 
-Block → role resolution → gated access → CONFIRM intercept → pause → rate limit
-→ budget → serialized turn. The order is load-bearing, the list is frozen, and
-there is no registration API that can insert, remove or reorder a step. Module
-intercepts attach only after gating and may short-circuit with a reply; they can
-never precede the spine.
+`PRE_TURN_SPINE`, in full, because the positions are the invariant:
+
+```
+block-list → role-resolution → gated-guest → record-inbound →
+confirm-intercept → escalation-confirm → addressed-gate → pause →
+rate-limit → daily-budget → auto-answer-reserve → memory-barrier →
+auto-answer-thread
+```
+
+Three of those adjacencies are load-bearing and named in the code:
+`confirm-intercept` runs **before** `addressed-gate`, so a bare "CONFIRM"
+works in a group where an unaddressed message would otherwise be dropped;
+`pause` runs before `rate-limit`, so a paused user never receives both
+notices; `daily-budget` runs after both, so a shed message never pays for a
+budget read. Abbreviating the list is how one of those quietly stops being
+true.
+
+The list is frozen and there is no registration API that can insert, remove or
+reorder a step. Module intercepts **append after the last spine step** — they
+never precede any of it — and each returns `'continue'` or `'handled'`: an
+intercept that has dealt with a message stops the chain and acts through the
+router, rather than returning reply text of its own.
 
 ### 8. Non-runtime-controllable research surface
 
@@ -145,7 +177,12 @@ runtime.
 
 Privileged mutations go through the kernel's audit helper: an audit row plus a
 super-admin echo, paired in one place so a domain file cannot implement half of
-it. Modules declare the action kinds they write.
+it.
+
+**Planned:** an `auditActionKinds` declaration per module. It exists only on
+the v0 contract type and nothing reads it; the allowlist the audit views filter
+by is a fixed constant (`MODERATION_ACTION_KINDS`) that a DB CHECK constrains,
+and it is maintained by hand.
 
 ### 10. Personas change voice, not authority
 
@@ -163,12 +200,20 @@ drive.
 
 ---
 
-## 3 · Pipeline threat model
+## 3 · The development pipeline's threat model
 
-The reusable workflows are a supply-chain surface: they run agents with write
-access to a repository, against issue and PR content that is often
-attacker-writable. The controls below are structural, and each exists because
-the failure it prevents is cheap to cause and expensive to notice.
+**Scope:** this section is about the multi-loop agent pipeline that develops
+these repositories, which lives in `swampratnz/community-agent`'s workflows.
+Nothing described here runs in this repository — its three workflows are CI,
+publish and the canary, none of which is agent-driven. It is written down here
+because the plan is to ship the pipeline as reusable workflows from this repo,
+and because the controls transfer to any repository that adopts it. Until that
+lands, read it as a specification, not as a description of what this repo does.
+
+The pipeline is a supply-chain surface: it runs agents with write access to a
+repository, against issue and PR content that is often attacker-writable. The
+controls below are structural, and each exists because the failure it prevents
+is cheap to cause and expensive to notice.
 
 ### Ownership is a security control, not project management
 
@@ -238,6 +283,9 @@ window. What bounds the damage is that the reviewer cannot merge.
 
 ### The gates are part of the threat model
 
+Unlike the rest of §3, this subsection describes **this** repository as well:
+the two gate scripts ship in this package and `ci.yml` runs them here.
+
 The security-test floor and the context-pack gate are not hygiene. The floor's
 exact-per-file match plus its PR-base lowering guard exist because the one way
 to neuter it quietly is to delete a security test and lower its count in the
@@ -254,7 +302,36 @@ token handed over.
 
 ---
 
-## 4 · Known caveats to carry forward
+## 4 · Known gaps in enforcement coverage
+
+The invariants above are enforced by code; the code is held in place by tests
+whose count `npm run test:security` pins per file. Two of the most load-bearing
+enforcement points have **no test file here and no floor entry**, so a change
+to either can go green in this repository alone:
+
+| Module | What it decides | Coverage here |
+|---|---|---|
+| `src/auth/rbac.ts` | tier resolution and the derived per-turn tool surface — invariant 2 | none (49 `SECURITY:` cases stayed behind) |
+| `src/agent/outbound.ts` | secret redaction on the last hop before a wire — invariant 4 | none (7 cases stayed behind) |
+
+The code moved; the tests did not, because they import the consumer's tool
+registry and the extraction's selection rule read that as "community test". The
+cases still run over in `swampratnz/community-agent` against this package's
+code, and the nightly canary is what makes that fact load-bearing rather than
+incidental — but a second consumer has no such safety net. Tracked as issue #9;
+the fix is tests written against the package boundary (register a synthetic
+tool set, assert the derivation) rather than copies of the originals.
+
+**The gate cannot see this class of gap.** The security floor protects against
+deleting cases within a repo. It cannot see a module arriving with no test
+file, and it cannot see a file arriving with fewer cases than it left with —
+the receiving manifest records whatever shows up as correct. Cross-repo moves
+therefore need a name-level diff against the source commit, not a count
+comparison.
+
+---
+
+## 5 · Known caveats to carry forward
 
 - **Subscription auth isolation.** Where the agent authenticates with a personal
   subscription rather than an API key, the blast radius of a compromised process

@@ -17,11 +17,12 @@ Two things this map deliberately does **not** try to be:
 - **Complete.** Nested files inside a subsystem are called out only where the
   subsystem is big enough that "look in `src/agent/`" is not an answer.
 
-The map is short right now because the tree is: this repo holds the module API
-contract and the gates, and the runtime arrives by extraction from
-`community-agent` (see [`../ROADMAP.md`](../ROADMAP.md)). The extraction pass
-lands its entries in the same diffs that land the code — the gate makes that
-non-optional.
+What is **not** here: the content and the composition. Tools, prose, personas,
+notice text, the job list, the adapter factory list and the manifest that ties
+them together belong to the consuming agent, not to this tree. If you are
+looking for one of those, you are in the wrong repo —
+[`../MODULE-API.md`](../MODULE-API.md) says which side of the line each seam
+falls on.
 
 The security spine — the paths where a mistake is a security bug, not a bug —
 is marked **🔒**.
@@ -49,7 +50,7 @@ is marked **🔒**.
 - `src/backgroundJobHealth.ts` — Pure consecutive-failure debounce tracker for scheduled jobs, so one outage produces one alert rather than an alert per tick.
 - `src/budgetCheckFailureNotice.ts` — Pure debounce for the single super-admin DM sent when the daily reply-budget check itself fails (a systemic condition, not a per-user one).
 - `src/commands/` — The base command-registry mechanism: the `TEXT_COMMAND_UNMATCHED` sentinel, the handler/binding/`RegisteredCommand` types, the fail-loud `registerCommands`/`registeredCommands` slot both command surfaces read, and the `bindDiscordCommand` late-binding hook.
-- `src/commands/registry.ts` — The one file in `src/base/commands/` today: the once-per-process `registerCommands` slot, `registeredCommands()` (which THROWS rather than reporting an empty roster, so a forgotten side-effect import can't silently stop every command matching), and `bindDiscordCommand`'s late binding.
+- `src/commands/registry.ts` — The only file in `src/commands/`: the once-per-process `registerCommands` slot, `registeredCommands()` (which THROWS rather than reporting an empty roster, so an unregistered read can't silently stop every command matching), and `bindDiscordCommand`'s late binding.
 - `src/config.ts` — The composition barrel: merges the per-domain slice fragments from `src/config/` into the full env schema, applies the cross-slice refine, parses once (fail-fast on a bad deploy), and exports the `config` singleton plus the pure `loadConfig(env)`.
 - `src/config/` — Per-domain zod slice fragments (each var's chain + doc comment lives with its domain) and their slice-local refinements; `env.ts` owns the one dotenv load + blank-normalisation. Adding a setting starts in the right slice here.
 - `src/config/boot.ts` — Boot-path config: validates ONLY the db+log slices so `logger.ts`/`storage/db.ts`/`storage/migrate.ts` run with just `DATABASE_URL` — what lets a bare `npm run migrate` work without the app's other required vars.
