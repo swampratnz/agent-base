@@ -86,6 +86,16 @@ dependency, and composed through `createAgent`. The canary is on and green.
 Still to come: the pipeline as reusable workflows (this repo ships none today —
 only `ci.yml`, `publish.yml` and the canary), and Phase 4.
 
+**Measured, and it revises the Phase 0 wording.** community-agent's nine
+pipeline workflows are ~3,700 lines, of which the deterministic no-LLM ones
+(auto-merge, groundskeeper, build-retry, ci-retry, outcomes) are ~840 and the
+LLM loops ~2,845 — and the latter are mostly prompt text tuned per repo. So
+about a quarter is genuinely reusable as a workflow and the rest is a template
+someone adapts. See [PIPELINE.md](PIPELINE.md), which also argues that porting
+the loops is the SECOND thing to automate here: the first is a release-
+confidence layer, because every defect that has reached a published artifact so
+far was in build/release machinery and invisible to a green CI run.
+
 ## Contract stability
 
 The module API is **v0 and expected to move**. `0.1.x` is published and

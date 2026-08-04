@@ -23,6 +23,10 @@ Read `README.md`, then:
 - `docs/SECURITY.md` — the runtime invariants and the pipeline threat model.
 - `docs/RELEASING.md` — how a release is cut, and why this package publishes
   to **public npmjs.com** rather than GitHub Packages.
+- `docs/PIPELINE.md` — what automation this repo should grow and in what order.
+  Read it before adding a workflow: every defect that has reached a published
+  artifact so far was in build/release machinery and invisible to a green CI
+  run, which is why a release-confidence layer comes before agent loops.
 - `docs/agents/` — the committed context pack for cold sessions.
 
 ## What is base and what is a module
