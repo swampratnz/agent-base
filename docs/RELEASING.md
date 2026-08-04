@@ -392,15 +392,27 @@ the package undependable for anything past the barrel — see
 `tests/packageExports.test.ts`, which pins that every module under `src/` is
 addressable.
 
-**ESM only.** Every entry in the exports map declares `types` and `import` and
-nothing else, so any resolution asking for the `require` condition gets
-`ERR_PACKAGE_PATH_NOT_EXPORTED`. That is consistent with `"type": "module"`,
-and no runtime import site is affected — but it is where a consumer stubs a
-toe, because Node >= 22 can otherwise `require()` ESM. It first bit
-`createRequire(...).resolve('@swampratnz/agent-base/…')` inside a test that
-only wanted a file path; `import.meta.resolve` is the right answer there, and
-it is what the consumer switched to. Tracked as issue #11, whose fix is a
-`default` condition alongside `import`.
+**ESM only, but resolvable from either loader.** The package ships one
+artifact and it is ESM — that has not changed. What changed is what the map
+*says* when something asks for it under another condition. Through the
+published `0.1.1` every entry declared `types` and `import` and nothing else, so a
+`require` resolution got `ERR_PACKAGE_PATH_NOT_EXPORTED` — an error that names
+the wrong problem, since the subpath *is* exported and is merely ESM-shaped.
+It first bit `createRequire(...).resolve('@swampratnz/agent-base/…')` inside a
+test that only wanted a file path (issue #11; `import.meta.resolve` is the
+right answer there and is what the consumer switched to).
+
+Each entry now ends in a `default` catch-all. Deliberately `default` and not
+`require`: a `require` key is a promise of a CommonJS artifact, and pointing it
+at an ESM file would state something false in the one place a bundler trusts
+most. `default` states what is true — one artifact, offered under every
+condition — and lets the loader decide. On the Node this package supports
+(`engines: >=22`; `require()` of ESM is unflagged from 22.12) such a call now
+resolves and works; on an older loader it fails as `ERR_REQUIRE_ESM`, which
+names the real constraint. `default` must be declared LAST, because conditions
+are matched in declaration order — `tests/packageExports.test.ts` pins that,
+and asks Node's own resolver under both conditions rather than only
+re-implementing the pattern matching.
 
 ### The canary
 

@@ -7,18 +7,22 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "_comment_exports": "Node's exports map is an ALLOW-LIST: a subpath with no entry fails resolution with ERR_PACKAGE_PATH_NOT_EXPORTED, and TypeScript reports the same gap as TS2307. The `.` barrel is a ~15-symbol convenience surface (createAgent, migrate, the schema manifest); a real module imports the tree directly — community-agent alone imports 53 modules — so the two wildcards below export every compiled module with its types. `./*.js` is the form to write, matching this repo's own `.js`-suffixed internal specifiers (`@swampratnz/agent-base/router.js`); `./*` accepts the extensionless form as well, and Node prefers the longer suffix pattern, so `router.js` never resolves through `./*` to `dist/router.js.js`. Wildcards rather than 53 hand-written entries because an enumeration silently omits every module added after it was written — the failure mode being fixed here. This does mean the whole of `dist/` is public API surface: that is the intent of a framework consumed by composition, and `files` already decides what `dist/` contains.",
+  "_comment_exports_default": "Conditions are matched in declaration order, so `default` is the catch-all that must come LAST. It exists because the map was `{types, import}` only, which makes every condition other than `import` — `require` above all — fail with ERR_PACKAGE_PATH_NOT_EXPORTED: a resolution error that says the subpath is not exported, when the truth is that it is exported and only ESM-shaped. `default` and not `require` on purpose. A `require` key is a promise of a CommonJS artifact; this package is `\"type\": \"module\"` and ships none, and pointing `require` at an ESM file would state something false in the one place a bundler trusts most. `default` states what is actually true — one artifact, offered under every condition — and lets the loader decide. On the Node this package supports (`engines: >=22`, and require(ESM) is unflagged from 22.12) a `require()` of these paths now resolves and works; on an older loader it fails as ERR_REQUIRE_ESM, which names the real constraint instead of misdirecting to the exports map. Found via swampratnz/agent-base#11, from community-agent#960 where `createRequire().resolve()` hit exactly this.",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./*.js": {
       "types": "./dist/*.d.ts",
-      "import": "./dist/*.js"
+      "import": "./dist/*.js",
+      "default": "./dist/*.js"
     },
     "./*": {
       "types": "./dist/*.d.ts",
-      "import": "./dist/*.js"
+      "import": "./dist/*.js",
+      "default": "./dist/*.js"
     },
     "./package.json": "./package.json"
   },
