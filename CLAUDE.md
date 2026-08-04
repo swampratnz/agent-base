@@ -45,7 +45,9 @@ the mechanism and the module registers data into it.
   exists in community-agent arrives by extraction, with its tests, its
   security floor and the pipeline that adjudicated it. Writing an equivalent
   fresh here forfeits all three. Bring the tests in the same diff as the code:
-  issue #9 is what it costs when they are left behind.
+  issue #9 is what it costs when they are left behind — `rbac.ts` and
+  `outbound.ts` shipped bare, and closing it meant writing 18 new cases against
+  the package boundary because the originals could not be copied.
 - **This repo is authoritative for base behaviour** now that the extraction has
   landed and community-agent consumes the package. A base change is made here
   and reaches the consumer as a version bump — never patched downstream. Where

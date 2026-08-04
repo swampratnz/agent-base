@@ -18,17 +18,18 @@ import type { Tier } from './tiers.js';
  * additionally require an out-of-band CONFIRM from the caller (see
  * agent/pendingActions.ts). Roles come from env/DB only — never chat text.
  *
- * The tier lists are REGISTERED by the tool registry
- * (src/module/agent/tools/index.ts calls `registerToolTiers` at its module scope,
- * deriving each list from `ToolDef.minTier`) rather than imported from it,
- * so this module never depends on the community tool inventory. Each tool's
- * `minTier` stays the single source of truth — a tool can no longer be
- * registered on the server yet missing from its tier's offer list (the
- * silent dead-code failure the old hand-maintained arrays allowed — see
- * response_latency's historical note in tools/digestsAdmin.ts). Per-tool
- * tier/scope rationale lives on each `defineTool` entry in its domain file.
- * Everything reading the lists FAILS CLOSED before registration: import the
- * registry (as src/index.ts and core.ts do) before deriving a tool surface.
+ * The tier lists are REGISTERED by a module rather than imported from one:
+ * `createAgent` calls `registerToolTiers` with the manifest's `toolTiers`,
+ * which the module derives from each of its own `ToolDef.minTier` values. So
+ * base never depends on any deployment's tool inventory, and a tool's
+ * `minTier` stays the single source of truth — a tool cannot be registered on
+ * the server yet missing from its tier's offer list, which is the silent
+ * dead-code failure hand-maintained arrays allowed.
+ * Everything reading the lists FAILS CLOSED before registration, so a
+ * composition that never supplied `toolTiers` cannot serve a turn with a
+ * surface nobody registered. (`createAgent`'s plan pass rejects that
+ * composition outright, before any side effect — this is the backstop for
+ * anything reaching these accessors another way.)
  * The tier lattice itself (`atLeast`/`assertAtLeast`) lives in tiers.ts — a
  * dependency-free leaf the domain files can import without cycling back
  * through this module — and is re-exported here for the many existing
@@ -68,11 +69,11 @@ export interface ToolTierRegistration {
 let registered: ToolTierRegistration | null = null;
 
 /**
- * Register the tier lists, exactly once per process — called by the tool
- * registry (src/module/agent/tools/index.ts) at its own module scope, so importing
- * the registry anywhere is what makes the RBAC surface derivable. A second
- * registration throws rather than swapping the lists after boot, matching
- * the skills-manifest/prompt-sections registries.
+ * Register the tier lists, exactly once per process — called by `createAgent`
+ * from the manifest's `toolTiers` field, in the singleton-registration step. A
+ * second registration throws rather than swapping the lists after boot,
+ * matching the skills-manifest/prompt-sections registries: the tool surface of
+ * a running agent is fixed at boot and nothing may rewrite it.
  */
 export function registerToolTiers(tiers: ToolTierRegistration): void {
   if (registered) {
@@ -98,7 +99,7 @@ export function areToolTiersRegistered(): boolean {
 function registeredTiers(): ToolTierRegistration {
   if (!registered) {
     throw new Error(
-      'no tool tiers registered — import the tool registry (src/module/agent/tools/index.js) before deriving a tool surface',
+      'no tool tiers registered — a module must supply `toolTiers` on its createAgent manifest before a tool surface can be derived',
     );
   }
   return registered;
@@ -106,7 +107,9 @@ function registeredTiers(): ToolTierRegistration {
 
 // The registered lists under their long-standing names, for the many test
 // call sites. Live bindings assigned by registerToolTiers — undefined (never
-// a narrower or wider list) until the tool registry has been imported.
+// a narrower or wider list) until a module has registered. A reader that
+// destructures these at import time snapshots that `undefined`; take the
+// namespace if you need to observe registration.
 export let MEMBER_TOOLS: readonly string[];
 export let ADMIN_TOOLS: readonly string[];
 export let SUPER_ADMIN_TOOLS: readonly string[];
