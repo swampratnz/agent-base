@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -19,6 +20,13 @@ import { fileURLToPath } from 'node:url';
  * target a path inside `node_modules` (ERR_INVALID_PACKAGE_TARGET) and a
  * tsconfig `paths` entry fixes the types while leaving the runtime broken. So
  * it has to be right here, and these assertions are what keep it right.
+ *
+ * The second half of the same lesson is the CONDITION set. 0.1.1 published
+ * `{types, import}`, which exports the tree to ESM resolution and to nothing
+ * else — every other condition, `require` first among them, falls off the end
+ * of the map and reports ERR_PACKAGE_PATH_NOT_EXPORTED. That error names the
+ * wrong problem: the subpath IS exported, it is only ESM-shaped. A `default`
+ * catch-all makes the map say that instead.
  */
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -35,7 +43,7 @@ const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')
  * sitting alongside `./*` is that the longer suffix wins — otherwise
  * `router.js` would resolve through `./*` to `dist/router.js.js`.
  */
-function resolveSubpath(specifier: string): { types: string; import: string } | null {
+function resolveSubpath(specifier: string): { types: string; import: string; default: string } | null {
   const candidates: { base: string; suffix: string; target: Record<string, string> }[] = [];
   for (const [key, value] of Object.entries(pkg.exports)) {
     const star = key.indexOf('*');
@@ -51,7 +59,11 @@ function resolveSubpath(specifier: string): { types: string; import: string } | 
   const best = candidates[0];
   const match = specifier.slice(best.base.length, specifier.length - best.suffix.length);
   const substitute = (t: string) => t.replace('*', match);
-  return { types: substitute(best.target.types), import: substitute(best.target.import) };
+  return {
+    types: substitute(best.target.types),
+    import: substitute(best.target.import),
+    default: substitute(best.target.default),
+  };
 }
 
 /** Every compiled module, as the repo-relative path a specifier addresses. */
@@ -66,7 +78,11 @@ function sourceModules(dir = path.join(repoRoot, 'src'), prefix = ''): string[] 
 }
 
 test('the barrel and package.json stay exactly as they were', () => {
-  assert.deepEqual(pkg.exports['.'], { types: './dist/index.d.ts', import: './dist/index.js' });
+  assert.deepEqual(pkg.exports['.'], {
+    types: './dist/index.d.ts',
+    import: './dist/index.js',
+    default: './dist/index.js',
+  });
   assert.equal(pkg.exports['./package.json'], './package.json');
   assert.ok(pkg.files.includes('dist'), 'the wildcards are pointless if dist/ is not in the tarball');
 });
@@ -78,7 +94,7 @@ test('every compiled module is importable by its .js specifier, with types', () 
     const resolved = resolveSubpath(`./${mod}.js`);
     assert.deepEqual(
       resolved,
-      { types: `./dist/${mod}.d.ts`, import: `./dist/${mod}.js` },
+      { types: `./dist/${mod}.d.ts`, import: `./dist/${mod}.js`, default: `./dist/${mod}.js` },
       `@swampratnz/agent-base/${mod}.js must resolve to dist/${mod}.js and dist/${mod}.d.ts`,
     );
   }
@@ -89,7 +105,52 @@ test('the extensionless specifier resolves to the same module', () => {
     assert.deepEqual(resolveSubpath(`./${mod}`), {
       types: `./dist/${mod}.d.ts`,
       import: `./dist/${mod}.js`,
+      default: `./dist/${mod}.js`,
     });
+  }
+});
+
+/**
+ * Order is not cosmetic here: Node takes the FIRST matching condition, so a
+ * `default` written above `import` would swallow every other condition and a
+ * `default` written above `types` would take the `.js` away from TypeScript.
+ * The catch-all only behaves like a catch-all when it is last.
+ */
+test('every conditional target lists default last, after types and import', () => {
+  for (const [key, value] of Object.entries(pkg.exports)) {
+    if (typeof value === 'string') continue; // ./package.json, a bare target
+    const conditions = Object.keys(value as Record<string, string>);
+    assert.deepEqual(
+      conditions,
+      ['types', 'import', 'default'],
+      `${key}: conditions are matched in declaration order, so default must come last`,
+    );
+  }
+});
+
+/**
+ * The behavioural half — the previous four tests re-implement Node's pattern
+ * matching, and a map can satisfy a re-implementation while still failing the
+ * real resolver. This asks Node itself, through both loaders, via the package
+ * self-reference (a package can resolve its own name once it declares
+ * `exports`). `createRequire().resolve()` is the exact call that failed in
+ * community-agent#960.
+ */
+test('Node resolves these specifiers under both the import and require conditions', (t) => {
+  if (!existsSync(path.join(repoRoot, 'dist'))) {
+    t.skip('dist/ not built in this working tree — `npm run build` covers this in CI');
+    return;
+  }
+  const require = createRequire(import.meta.url);
+  for (const mod of ['router', 'auth/rbac', 'agent/outbound']) {
+    const specifier = `@swampratnz/agent-base/${mod}.js`;
+    const expected = path.join(repoRoot, 'dist', `${mod}.js`);
+
+    // The require condition — ERR_PACKAGE_PATH_NOT_EXPORTED before `default`.
+    assert.equal(require.resolve(specifier), expected, `require: ${specifier}`);
+
+    // The import condition, which worked all along and must keep working.
+    assert.equal(fileURLToPath(import.meta.resolve(specifier)), expected, `import: ${specifier}`);
   }
 });
 
