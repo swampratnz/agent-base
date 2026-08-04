@@ -342,20 +342,31 @@ test('a missing manifest fails with an actionable message rather than a stack tr
   }
 });
 
-test('the real tests/security-floor.json matches this repo', () => {
-  // Belt and braces: CI runs `npm run test:security` in its own job, but a
-  // contributor running only `npm test` should still see a lagging manifest.
-  //
-  // The child must NOT inherit NODE_TEST_CONTEXT: the gate spawns a node:test
-  // runner of its own, and node refuses to run test FILES recursively inside
-  // an already-running test process ("run() is being called recursively"),
-  // which would report zero SECURITY tests and fail for a reason that has
-  // nothing to do with the manifest.
-  const env = { ...process.env };
-  delete env.NODE_TEST_CONTEXT;
-  const res = spawnSync('node', [realScript], { cwd: repoRoot, encoding: 'utf8', env });
-  assert.equal(res.status, 0, `${res.stdout}${res.stderr}`);
-});
+// REMOVED (issue #18): a case that spawned the real gate against the real repo
+// root — `npm run test:security` in miniature — as belt and braces for a
+// contributor running only `npm test`.
+//
+// It ran the ENTIRE `SECURITY:` suite as a child process from inside `npm
+// test`, while the outer runner was already executing all 52 test files in
+// parallel, both reading the same `DATABASE_URL`. So `repository.test.ts`'s
+// 117 DB-backed cases ran twice, concurrently, against one database — the
+// hazard CLAUDE.md's build/verify section names ("concurrent runs corrupt each
+// other's fixtures because `node:test` runs test FILES in parallel"). This
+// test broke that rule against itself.
+//
+// The proof is two CI runs on one commit: `security-invariants`, which runs the
+// same 227 cases ALONE in its own job, passed both times; `build`, which ran
+// them as this child, failed both times. Same tests, same commit, same image —
+// passes alone, fails concurrently. It is a race, not a flake, and it reddened
+// a PR whose diff was a version string and two docs files.
+//
+// Nothing is lost from CI: `security-invariants` is that check, run properly.
+// What is lost is the local convenience, and the honest fix for that is to run
+// the documented full gate — `npm run test:security` is one line of it. See
+// docs/STANDARDS.md.
+//
+// Do not reinstate it without giving the child its own database. The cost was
+// never the assertion; it was two runners sharing fixtures.
 
 test("template/'s empty security floor is a valid starting state", () => {
   // template/ sits outside every other gate's scope, so this is the only
