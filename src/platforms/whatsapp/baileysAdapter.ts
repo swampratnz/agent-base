@@ -1,3 +1,28 @@
+/**
+ * The Baileys WhatsApp adapter.
+ *
+ * **`@whiskeysockets/baileys` is an OPTIONAL PEER of this package, and this is
+ * the only module that imports it at runtime.** A consumer that wants this
+ * provider installs it alongside the framework; one that does not never needs
+ * it, and importing this module without it fails with ERR_MODULE_NOT_FOUND.
+ *
+ * The reason is not taste. Baileys declares `libsignal` over `git+https`, and
+ * npm 12 refuses every git-protocol fetch (EALLOWGIT) — so while Baileys was a
+ * plain dependency, nobody on npm 12 could install this framework at all,
+ * whether or not they wanted WhatsApp, because npm resolves the whole tree
+ * before anything runs. Moving it to an optional peer put the constraint on
+ * the feature rather than the framework (issue #29).
+ *
+ * Two things follow for anyone editing here:
+ *
+ *   * keep the Baileys import confined to this file. `wire.ts` deliberately
+ *     uses `import type`, which erases at compile time and therefore costs a
+ *     consumer nothing; a runtime import added there would silently make the
+ *     package undependable on npm 12 again.
+ *   * do not import this module from the barrel, the platform registry, or
+ *     anything on a common path. It is reached only by a composition root that
+ *     has chosen this provider.
+ */
 import { Boom } from '@hapi/boom';
 import makeWASocket, {
   DisconnectReason,

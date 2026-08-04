@@ -135,15 +135,30 @@ every compiled module is addressable by its source path
 (`@swampratnz/agent-base/router.js`); see
 [docs/RELEASING.md § The consumer side](docs/RELEASING.md#the-consumer-side).
 
-> **Requires npm 11.x — npm 12 cannot install this package.** npm 12 refuses
-> all git-protocol fetches (`EALLOWGIT`), and `@whiskeysockets/baileys`, a
-> direct dependency, declares `libsignal` as a git dependency. So
-> `npm install` fails outright on npm 12 regardless of whether you intend to
-> use the WhatsApp Baileys provider. Use npm 11.x (`npm i -g npm@^11.5.1`)
-> until this is resolved — tracked as issue #29, and the CI job
-> `npm 12 still refuses the git dependency` will go red the day it changes so
-> this note cannot quietly go stale. Node itself is unaffected: `engines`
-> is `>=22` and 22 and 24 are both exercised.
+### Want the WhatsApp **Baileys** provider?
+
+Install it alongside — it is an **optional peer**, not a dependency:
+
+```bash
+npm install @swampratnz/agent-base @whiskeysockets/baileys
+```
+
+Everything else works without it. Only
+`@swampratnz/agent-base/platforms/whatsapp/baileysAdapter.js` imports Baileys
+at runtime, so a Discord-only agent, or one using the WhatsApp **Cloud**
+provider, never needs the package. Import that module without it and you get a
+plain `ERR_MODULE_NOT_FOUND`.
+
+**Why it is not a dependency.** Baileys declares `libsignal` over `git+https`,
+and **npm 12 refuses every git-protocol fetch** (`EALLOWGIT`). While Baileys sat
+in `dependencies`, nobody on npm 12 could install this framework *at all* —
+whether or not they wanted WhatsApp — because npm resolves the whole tree before
+anything runs. As an optional peer the constraint follows the feature: install
+the framework on any npm, and **if you want Baileys, use npm 11.x**
+(`npm i -g npm@^11.5.1`) until Baileys stops depending on git. See issue #29.
+
+Node is unaffected either way: `engines` is `>=22`, and 22 and 24 are both
+exercised in CI.
 
 Starting a new agent: copy [`template/`](template/) into a fresh repo and read
 its README. It ships the conventions, the empty ratchet-state files and the
