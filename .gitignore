@@ -24,3 +24,7 @@ logs/
 *.swp
 .idea/
 .vscode/
+
+# CI scratch: the consumption workflow packs here (relative, so Windows tar
+# never sees a drive letter it would read as a remote host).
+.pack/

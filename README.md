@@ -135,6 +135,16 @@ every compiled module is addressable by its source path
 (`@swampratnz/agent-base/router.js`); see
 [docs/RELEASING.md § The consumer side](docs/RELEASING.md#the-consumer-side).
 
+> **Requires npm 11.x — npm 12 cannot install this package.** npm 12 refuses
+> all git-protocol fetches (`EALLOWGIT`), and `@whiskeysockets/baileys`, a
+> direct dependency, declares `libsignal` as a git dependency. So
+> `npm install` fails outright on npm 12 regardless of whether you intend to
+> use the WhatsApp Baileys provider. Use npm 11.x (`npm i -g npm@^11.5.1`)
+> until this is resolved — tracked as issue #29, and the CI job
+> `npm 12 still refuses the git dependency` will go red the day it changes so
+> this note cannot quietly go stale. Node itself is unaffected: `engines`
+> is `>=22` and 22 and 24 are both exercised.
+
 Starting a new agent: copy [`template/`](template/) into a fresh repo and read
 its README. It ships the conventions, the empty ratchet-state files and the
 gate wiring — not a working app.
