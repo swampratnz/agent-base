@@ -192,8 +192,8 @@ flaggedToolPredicates: predicates;                       // → agent/featureFla
 ```
 
 (The underlying `registerToolTiers` / `registerToolServerParts` /
-`registerFlaggedToolPredicates` are exported and still callable directly, which
-is how the tests drive one slice at a time — but a module composes by manifest,
+`registerFlaggedToolPredicates` are exported and callable directly — a test can
+drive one registry in isolation that way — but a module composes by manifest,
 not by calling them.)
 
 - `registerToolTiers` replaces the hand-maintained tier arrays. `toolsForRole(role, platform)`
