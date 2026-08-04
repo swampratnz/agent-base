@@ -262,9 +262,15 @@ jobs:
       - name: Pack, and prove the fragments are IN the tarball
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/pkg"
-          npm pack --pack-destination "$RUNNER_TEMP/pkg"
-          tarball="$(ls "$RUNNER_TEMP"/pkg/*.tgz)"
+          # A RELATIVE pack destination, deliberately. $RUNNER_TEMP on Windows
+          # is `D:\a\_temp`, and GNU tar reads a leading `D:` as an rsh-style
+          # host spec — the first run of this job died with
+          # `tar (child): Cannot connect to D: resolve failed`. The usual fix,
+          # --force-local, is GNU-only and would break macOS's bsdtar, so the
+          # portable answer is to hand tar a path with no drive letter in it.
+          mkdir -p .pack
+          npm pack --pack-destination .pack
+          tarball="$(ls .pack/*.tgz)"
 
           # Read the count out of the TARBALL, not out of dist/. dist/ is what
           # the build produced on this machine; the tarball is what a consumer
