@@ -34,10 +34,25 @@ name: Canary — build community-agent against agent-base HEAD
 # turning it off again is the off switch if the consumer is ever mid-migration.
 # A manual run can bypass the variable with the `force` input.
 #
-# It runs on a daily cron (see `schedule` below) rather than per-commit,
-# because it builds an entire second repository against a real database. A
-# nightly red is therefore attributable to a day's worth of commits, not one —
-# `workflow_dispatch` with a `ref` is how you bisect.
+# It runs on TWO triggers, for different reasons (issue #26):
+#
+#   * `pull_request`, filtered to the PUBLIC SURFACE — the barrel, the manifest
+#     type, package.json, the shipped gate scripts. On those paths the question
+#     "does this break the consumer" has to be answered BEFORE the merge, and
+#     it is scoped by path because this job builds an entire second repository
+#     against a real database and most changes here cannot affect resolution at
+#     all.
+#   * the daily cron, kept — path filters cannot see a break caused by a
+#     dependency update or by community-agent's own drift, and a nightly red is
+#     attributable to a day of commits rather than one, so
+#     `workflow_dispatch` with a `ref` is still how you bisect that.
+#
+# NOTE if this is ever made a REQUIRED check: a required check must also fire
+# on `merge_group`, or enabling the merge queue wedges it — the queue waits
+# forever for a check that never starts. `merge_group` does not honour path
+# filters, so adding it means the canary runs on every queued merge. That is a
+# real cost and a deliberate decision, not an oversight; ci.yml carries
+# `merge_group` for exactly this reason.
 #
 # Deliberately NOT `continue-on-error`: an always-green canary is worse than no
 # canary. The variable is the off switch; while it is on, failure means failure.
@@ -51,8 +66,33 @@ name: Canary — build community-agent against agent-base HEAD
 # That is an optional addition, never a replacement for what is here.
 
 on:
+  # A PR that changes the PUBLIC SURFACE gets the canary before it merges, not
+  # the following afternoon (issue #26). A nightly-only canary reports that
+  # main broke the consumer AFTER main broke the consumer, and if two changes
+  # landed in the window it does not say which one did it.
+  #
+  # This matters more here than it would in most repos, because the consumer is
+  # where breakage is visible AT ALL. #10 removed exported types and not one of
+  # this repo's 661 tests could notice, because this repo does not import its
+  # own barrel the way a consumer does. What made that merge safe was
+  # dispatching the canary by hand against the PR branch — which worked, and
+  # worked because a human remembered.
+  #
+  # Scoped by PATH deliberately. A change under src/storage/repository/ cannot
+  # break a consumer's RESOLUTION, only its behaviour, and the consumer's own
+  # CI catches that on the next version bump. What is listed here is the
+  # surface a consumer binds to at install and import time.
+  pull_request:
+    paths:
+      - 'src/index.ts' # the barrel
+      - 'src/createAgent.ts' # the manifest type every module is written against
+      - 'package.json' # exports, files, engines, dependencies
+      - 'scripts/**' # the gate scripts a scaffolded repo runs from node_modules
+      - '.github/workflows/canary-community-agent.yml' # this file
   schedule:
     # Daily, well off the hour so it does not pile onto the top-of-hour rush.
+    # KEPT, and not redundant with the PR trigger: path filters cannot see a
+    # break caused by a dependency update or by community-agent's own drift.
     - cron: '37 14 * * *'
   workflow_dispatch:
     inputs:
@@ -68,9 +108,17 @@ on:
 permissions:
   contents: read
 
+# Scoped by REF, not one global group. With the PR trigger added, a single
+# shared group would have every PR's canary cancel every other PR's — and the
+# nightly run — leaving a cancelled check that reads like a pass. Rapid pushes
+# to one PR still supersede each other, which is the behaviour worth keeping.
+#
+# cancel-in-progress only for pull_request, matching ci.yml: a cancelled
+# scheduled run would silently skip a night, and a cancelled run concludes
+# `cancelled` rather than `failure`, so nothing would flag it.
 concurrency:
-  group: canary-community-agent
-  cancel-in-progress: true
+  group: canary-community-agent-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   canary:
@@ -212,3 +260,37 @@ jobs:
       - name: community-agent build
         working-directory: .canary/app
         run: npm run build
+
+      # A red canary has TWO possible causes and they need different responses:
+      # this commit broke the consumer, or the consumer broke itself and would
+      # be red against any base. Without saying so, the second kind trains
+      # people to force-merge through a red canary — which is how the first
+      # kind then gets through too.
+      #
+      # This does not attempt to adjudicate automatically. Building the
+      # consumer a second time against its published baseline would double a
+      # ten-minute job to answer a question that a glance at the consumer's own
+      # CI answers for free. It just makes sure nobody has to remember the
+      # question.
+      - name: Which repository actually broke?
+        if: failure()
+        run: |
+          {
+            echo "## Canary red — check whose fault before force-merging"
+            echo
+            echo "This built **community-agent** against **this commit** of agent-base."
+            echo "A failure above means one of two things:"
+            echo
+            echo "1. **This PR broke the consumer.** The usual causes are a changed"
+            echo "   registration shape (the prompt-section slot set and the notice-id"
+            echo "   floor are the two that bite), a removed export, a new required env"
+            echo "   var, or a schema fragment that does not replay."
+            echo "2. **The consumer is already red on its own main**, independently of"
+            echo "   this change."
+            echo
+            echo "Tell them apart in one click:"
+            echo "<https://github.com/swampratnz/community-agent/actions/workflows/ci.yml?query=branch%3Amain>"
+            echo
+            echo "If community-agent's own main is red on the same step, the break is"
+            echo "theirs and this PR is a bystander. If its main is green, it is this PR."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
