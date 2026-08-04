@@ -26,6 +26,7 @@ alongside them are gone. A consumer that imports its types by their deep paths
 | `tests/` | the suite that came across with the code, including the `SECURITY:` cases the floor gate counts |
 | `scripts/` | the **gates** — the security-test floor and the context-pack freshness check, generalised to multi-root layouts |
 | `.github/workflows/` | CI running the full gate set, the tag-triggered publish, and a **canary** that builds community-agent against this commit |
+| `docs/VISION.md` | what this is for, what it must never become, and how we would know it worked |
 | `docs/MODULE-API.md` | what a module implements, written against **real code** |
 | `docs/PIPELINE.md` | what automation this repo should grow, and why a release-confidence layer comes before agent loops |
 | `template/` | a starting point for a new agent repo |
