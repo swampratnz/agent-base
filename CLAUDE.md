@@ -7,17 +7,19 @@ Guidance for any Claude Code session working in `swampratnz/agent-base`.
 The community-agnostic base framework extracted from
 `swampratnz/community-agent`. It holds the **runtime** (`src/` — the agent
 kernel, platform adapters, storage + schema, router spine, jobs, auth, config),
-the **contract** (`src/module-api/`), `createAgent`, the **gates**, the **docs**
-and the **new-agent template**. The runtime arrived by extraction, not by being
-written fresh here — see `docs/ROADMAP.md`.
+the **contract** (`src/createAgent.ts`'s `AgentModule`, re-exported from the
+barrel), `createAgent`, the **gates**, the **docs** and the **new-agent
+template**. The runtime arrived by extraction, not by being written fresh here
+— see `docs/ROADMAP.md`.
 
 Read `README.md`, then:
 
 - `docs/ROADMAP.md` — what lands when, and the Phase 0 decisions of record.
 - `docs/MODULE-API.md` — what a module actually implements, written against
-  **this repo's real code**, with a contract-vs-code table at the end recording
-  where the v0 types still differ. The most useful document in the repo; read
-  it before believing a type.
+  **this repo's real code**, marking every seam `live` / `partial` / `planned`,
+  and recording at the end where the pre-extraction v0 contract disagreed with
+  the implementation and which one won. The most useful document in the repo;
+  read it before believing a type.
 - `docs/SECURITY.md` — the runtime invariants and the pipeline threat model.
 - `docs/RELEASING.md` — how a release is cut, and why this package publishes
   to **public npmjs.com** rather than GitHub Packages.
@@ -50,13 +52,16 @@ the mechanism and the module registers data into it.
   the package boundary because the originals could not be copied.
 - **This repo is authoritative for base behaviour** now that the extraction has
   landed and community-agent consumes the package. A base change is made here
-  and reaches the consumer as a version bump — never patched downstream. Where
-  `src/module-api/`'s v0 types and `createAgent`'s live `AgentModule` disagree,
-  the live one runs (issue #10); reconcile toward it and update
-  `docs/MODULE-API.md`'s contract-vs-code table.
+  and reaches the consumer as a version bump — never patched downstream.
 - **Never describe an unimplemented extension point as real.** Mark it
-  `planned` and say where the behaviour lives today. A document that invents an
-  API is worse than a missing one, because someone will build against it.
+  `planned` in `docs/MODULE-API.md` and say where the behaviour lives today. A
+  document that invents an API is worse than a missing one, because someone
+  will build against it — and an exported TYPE is worse than either, because
+  nobody builds against a paragraph. That is what issue #10 cost: a directory
+  of v0 sketches sat next to the live types and the barrel exported both, so
+  the package advertised two different `AgentModule`s. **The barrel exports
+  live types only, from the files that run them**; a planned seam exports
+  nothing. `tests/moduleApi.test.ts` pins it.
 - **Never weaken an invariant in `docs/SECURITY.md` via a contract change** —
   e.g. making CONFIRM optional on a destructive path, letting a module supply
   executable filtering or rendering hooks on outbound sends, deriving tiers

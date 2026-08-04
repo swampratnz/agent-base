@@ -118,22 +118,27 @@ Gate: `npm run build`, `npm run migrate`, `npm test`.
 
 ---
 
-## Changing a module-API type (`src/module-api/**`)
+## Changing what a module registers (the manifest surface)
 
-These are the **frozen v0 contract** types, describing seams whose runtime is
-not reified as registration yet (adapters, jobs, ingest sources). They are not
-where a live seam is changed — that is `createAgent.ts`'s `AgentModule`, and
-where the two disagree the live one runs (issue #10).
+There is exactly ONE module contract: `AgentModule` in `src/createAgent.ts`,
+re-exported from the barrel (also as `AgentModuleManifest`). There used to be a
+second, in a `src/module-api/` of v0 sketches, and the barrel exported both —
+issue #10, and the reason for the rule below.
 
 | File | Why |
 |---|---|
-| `src/module-api/<area>.ts` | the type itself |
-| `src/index.ts` | the re-export, if the type is new |
-| `tests/moduleApi.test.ts` | the contract test builds a plausible module; if the change breaks a real consumer, this stops compiling |
-| `docs/MODULE-API.md` | the [contract-vs-code table](../MODULE-API.md#contract-vs-code): delete the row you reconciled, add the one you found |
+| `src/createAgent.ts` | the manifest field, plus its `SINGLETONS`/`REQUIREMENTS` row if the registry is required to serve a turn |
+| the registry file | `register*()` and its fail-closed accessor — the field is a carrier, the registry is the mechanism |
+| `src/index.ts` | the re-export, if a consumer needs to name the type |
+| `tests/createAgent.test.ts` | the composition behaviour: plan-pass rejection, singleton collision, readiness probe |
+| `tests/moduleApi.test.ts` | the BARREL's surface: a manifest written against the exported types must still satisfy `planComposition` |
+| `docs/MODULE-API.md` | the section for that seam, and its **live** / **partial** / **planned** marking |
 
-Never describe an unimplemented extension point as though it were real — mark
-it `planned` and say where the behaviour lives today.
+**The barrel exports live types only, from the files that run them.** An
+extension point with no runtime gets a `planned` entry in `docs/MODULE-API.md`
+saying where the behaviour lives today, and exports nothing — a document that
+invents an API is bad, and an exported interface that invents one is worse,
+because nobody builds against a paragraph.
 
 Gate that catches a miss: `npm run typecheck` (both projects) and `npm test`.
 
@@ -232,8 +237,8 @@ something that turns out to be generic after all.
    its `SECURITY:` counts to `tests/security-floor.json`;
 3. add the new `src/` paths to [`module-map.md`](module-map.md) in the same
    diff — the gate will not let you defer it;
-4. reconcile [`../MODULE-API.md`](../MODULE-API.md)'s contract-vs-code table
-   for anything the move settles.
+4. update the seam's section in [`../MODULE-API.md`](../MODULE-API.md) — and
+   its `live` / `partial` / `planned` marking, if the move changed it.
 
 **Diff the test file by NAME against the source commit, not by count.** The
 security floor protects against deleting cases within a repo; it cannot see a

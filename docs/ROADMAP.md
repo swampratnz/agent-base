@@ -91,11 +91,13 @@ only `ci.yml`, `publish.yml` and the canary), and Phase 4.
 The module API is **v0 and expected to move**. `0.1.x` is published and
 installable, and a second consumer is welcome to build against it — but while
 the major is `0`, a breaking change to the module API is a **minor** bump, and
-there will be some: `src/module-api/`'s types and `createAgent`'s live
-`AgentModule` still disagree in the ways
-[MODULE-API.md's contract-vs-code table](MODULE-API.md#contract-vs-code)
-records, and reconciling them is a breaking change by construction (issue #10).
-Pin an exact version if that matters to you.
+there will be some. The first was issue #10: the barrel used to export the v0
+contract types in `src/module-api/` alongside the live ones, which meant two
+different `AgentModule`s and a `ToolDef` the tool server would reject.
+Reconciling toward the live types removed those exports outright — a breaking
+change by construction, and invisible to the one existing consumer, which
+imported the live types by their deep paths. Pin an exact version if that
+matters to you.
 
 ## Phase 0 decisions of record
 

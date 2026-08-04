@@ -98,12 +98,20 @@ recording, one shutdown sweep), the notification service, the notice catalogue
 with its locale/style precedence (`strings/`), retention sweeps, budget
 accounting and crash handlers.
 
-### `module-api/` — the v0 contract
+### `index.ts` — the barrel, and the contract
 
-Types only: no runtime, no enforcement. It describes the seams whose runtime is
-not reified as registration yet. The manifest `createAgent` actually takes is
-in `createAgent.ts`; where the two disagree, that one runs. See
-[MODULE-API.md](MODULE-API.md) and [`../src/module-api/`](../src/module-api/).
+The manifest a module hands in is `createAgent.ts`'s `AgentModule`, and it is
+the only one: `src/index.ts` re-exports it (as `AgentModule` and the alias
+`AgentModuleManifest`) alongside the other types a manifest is written in terms
+of, each from the file that runs it.
+
+There was a `src/module-api/` until issue #10 — types only, no runtime,
+sketching the intended final shape of each seam. Exporting it beside the live
+types meant the package advertised two different `AgentModule`s and a `ToolDef`
+the tool server would reject, and nothing could fail, because the one consumer
+imported the live types by their deep paths. Seams whose runtime is not reified
+as registration yet are now described in [MODULE-API.md](MODULE-API.md) under
+`planned`, where they cannot be imported.
 
 ---
 
