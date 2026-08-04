@@ -48,8 +48,27 @@ permissions:
 
 jobs:
   consume:
-    name: scaffold, install the tarball, run its gate
+    name: node ${{ matrix.node }}, npm ${{ matrix.npm-label }}
     runs-on: ubuntu-latest
+    strategy:
+      # Never cancel siblings: which CELLS fail is the whole signal. A
+      # toolchain-specific break that took the matrix down with it would look
+      # identical to a break that affects every toolchain.
+      fail-fast: false
+      matrix:
+        include:
+          # The everyday case: current Node, whatever npm ships with it.
+          - node: 24
+            npm: ''
+            npm-label: bundled
+          # The other end of `engines: >=22`, with npm pinned to the release
+          # toolchain. npm 10 (which Node 22 bundles) does NOT enforce the
+          # package.json/package-lock.json version pairing and npm 11 does —
+          # that asymmetry is exactly how a lockfile stuck at 0.0.1 while
+          # package.json said 0.1.1 passed CI and would have failed to publish.
+          - node: 22
+            npm: '^11.5.1'
+            npm-label: '11.x'
     services:
       # The scaffold runs `migrate` and its DB-backed tests for real. Same
       # image and health-check shape as ci.yml.
@@ -81,8 +100,14 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24
+          node-version: ${{ matrix.node }}
           cache: npm
+
+      - name: Pin npm
+        if: matrix.npm != ''
+        run: |
+          npm install -g "npm@${{ matrix.npm }}"
+          npm --version
 
       - run: npm ci
 
@@ -198,3 +223,118 @@ jobs:
             *"SMOKE OK"*) ;;
             *) echo "::error::a complete composition failed to reach started"; exit 1 ;;
           esac
+
+  # ---- Cross-platform pack (issue #25) ----------------------------------
+  #
+  # Build and pack only — NOT the full sequence. Service containers are a
+  # Linux-runner feature, so there is no Postgres here and the scaffold's
+  # migrate/DB tests cannot run; pretending otherwise would mean a matrix that
+  # silently skips its own point.
+  #
+  # What this catches is shell-isms in the build path. `cp src/.../*.sql` used
+  # to be the copy step, and `cp` is not a command on Windows — it failed on a
+  # laptop DURING a release, after the tarball had been prepared, which is the
+  # worst possible moment. `scripts/copy-schema.mjs` replaced it, and this is
+  # what stops the next one arriving the same way: the build script,
+  # copy-schema.mjs and check-dist-schema.mjs all run on whoever's machine cuts
+  # a release or scaffolds a repo.
+  pack-portability:
+    name: build + pack on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      # `shell: bash` on every script step so ONE script serves all three
+      # runners — Windows runners ship Git Bash. Without it these would be
+      # PowerShell on Windows and the comparison would be meaningless.
+      - name: Pack, and prove the fragments are IN the tarball
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/pkg"
+          npm pack --pack-destination "$RUNNER_TEMP/pkg"
+          tarball="$(ls "$RUNNER_TEMP"/pkg/*.tgz)"
+
+          # Read the count out of the TARBALL, not out of dist/. dist/ is what
+          # the build produced on this machine; the tarball is what a consumer
+          # would receive, and the copy step is exactly what broke on Windows.
+          shipped="$(tar -tzf "$tarball" | grep -c '\.sql$' || true)"
+          expected="$(ls src/storage/schema/*.sql | wc -l | tr -d ' ')"
+          echo "fragments: $shipped in the tarball, $expected in src/"
+          if [ "$shipped" != "$expected" ]; then
+            echo "::error::$expected .sql fragments in src/ but $shipped reached the tarball on ${{ matrix.os }}"
+            exit 1
+          fi
+
+  # ---- The npm 12 limitation (issue #24) --------------------------------
+  #
+  # This job asserts a KNOWN, CURRENTLY-TRUE LIMITATION rather than a property
+  # we want. It is green while the limitation holds and red when it changes,
+  # in EITHER direction, because either way the README is then wrong.
+  #
+  # The finding: npm 12 refuses all git-protocol fetches (EALLOWGIT), and
+  # `@whiskeysockets/baileys` — a direct dependency — declares
+  # `libsignal: git+https://github.com/whiskeysockets/libsignal-node.git`.
+  # So a consumer on npm 12 cannot install this package AT ALL. Not a
+  # dev-environment quirk: it is the published tarball's own dependency tree,
+  # and npm 12 is current `latest`.
+  #
+  # That is a product decision (drop Baileys? make it optional? vendor
+  # libsignal?), tracked separately. What belongs HERE is that nobody
+  # rediscovers it by accident, and that the day it changes we notice and
+  # update the docs rather than leaving a stale warning in the README.
+  npm12-limitation:
+    name: npm 12 still refuses the git dependency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - name: A consumer on npm 12 cannot install this package
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/pkg" "$RUNNER_TEMP/n12app"
+          npm pack --pack-destination "$RUNNER_TEMP/pkg"
+          tarball="$(ls "$RUNNER_TEMP"/pkg/*.tgz)"
+          cp -R template/. "$RUNNER_TEMP/n12app/"
+
+          npm install -g npm@12
+          npm --version
+
+          cd "$RUNNER_TEMP/n12app"
+          set +e
+          out="$(npm install "$tarball" --no-audit --no-fund 2>&1)"
+          status=$?
+          set -e
+          echo "$out"
+
+          if [ "$status" -ne 0 ] && printf '%s' "$out" | grep -q 'EALLOWGIT'; then
+            echo "Limitation holds: npm 12 refuses the git-protocol dependency, as README documents."
+            exit 0
+          fi
+
+          if [ "$status" -eq 0 ]; then
+            echo "::error::npm 12 CAN now install this package. Good news — remove the limitation from README's consumer section and delete this job."
+            exit 1
+          fi
+
+          echo "::error::npm 12 failed for a DIFFERENT reason than EALLOWGIT. Read the log above; the documented limitation may be wrong."
+          exit 1
