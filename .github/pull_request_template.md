@@ -13,16 +13,20 @@ do not paste secrets, tokens, env values, or hostnames here.
      flow, outbound filtering, data access scope, the router spine order, or
      the pipeline's trust boundaries. If none, say so explicitly.
 
-     If this diff documents a base↔module seam, say whether docs/MODULE-API.md
-     is still true against community-agent's real code. -->
+     If this diff touches a base↔module seam, say whether docs/MODULE-API.md
+     is still true against this repo's real code — it is published, so a stale
+     signature there is something a consumer builds against. -->
 
 ## How verified
 
 <!-- Reminder — the full gate, which CI runs too:
 
      npm run typecheck && npm run lint && npm run format:check \
-       && npm test && npm run build \
+       && npm run migrate && npm test && npm run build \
        && npm run context:check && npm run test:security
+
+     `migrate` needs DATABASE_URL on your OWN Postgres 16 + pgvector database;
+     the DB-backed tests skip without it, and a skipped suite proves nothing.
 
      Note anything you verified by hand, and anything you could not verify
      here (e.g. a change that only the extraction pass can exercise). -->
