@@ -179,6 +179,121 @@ both repositories, and inventing one is the hardest single piece of Layer 2.
 
 **Done means a merged PR, never a release.** Same as today. No loop tags.
 
+### The loops, and what each needs
+
+The nine workflows split into two kinds. This matters for porting, because only
+one kind is a find-and-replace.
+
+| Loop | Kind | Trigger | Ports as |
+|---|---|---|---|
+| research | LLM | cron | needs a new prompt — see below |
+| adversarial | LLM | `status:draft` label | prompt largely portable |
+| build | LLM | `status:approved` label | **prompt needs the gate list rewritten** |
+| pr-review | LLM | PR opened / synchronize | prompt largely portable |
+| pr-autofix | LLM | CI failure, `run_attempt` ≥ 2 | prompt largely portable |
+| pr-revise | LLM | review verdict, self-dispatch | prompt largely portable |
+| pr-conflict | LLM | push to main, hourly sweep | prompt largely portable |
+| ci-retry | deterministic | CI failure, `run_attempt` < 2 | **verbatim** |
+| build-retry | deterministic | build run failed | **verbatim** |
+| groundskeeper | deterministic | hourly | **verbatim** |
+| pr-automerge | deterministic | PR events | verbatim, but see Open decisions |
+| outcomes | deterministic | scheduled | verbatim |
+
+### The label state machine
+
+Coordination is entirely through issue labels — there is no session-to-session
+channel; the repository is the bus. The set community-agent uses, minus its
+`theme:*` axis:
+
+```
+research ──▶ [proposal, status:draft]
+                    │
+adversarial ──▶ status:approved   |   status:rejected (closed)
+                    │
+build ──▶ status:building ──▶ branch + PR "Closes #N" ──▶ status:built
+                    │
+pr-review ──▶ approve | request changes
+                    │
+              ⟶  merge  ⟵
+```
+
+| Label | Meaning |
+|---|---|
+| `proposal` | this issue is a proposal |
+| `status:draft` | awaiting adversarial review |
+| `status:approved` | buildable — **the build worker triggers on this label event** |
+| `status:rejected` | failed review (issue closed) |
+| `status:building` | claimed by a build run |
+| `status:built` | PR open, awaiting review/merge |
+| `needs-human` | escalated; a **lane**, not a flag — the item leaves the automated queue |
+| `no-auto-merge` / `no-auto-resolve` | pin a PR out of a loop |
+| `human-merge-ready` | governance-path PR that passed everything else |
+
+`theme:*` is a diversity axis on proposals, and community-agent's values
+(`theme:knowledge`, `theme:moderation`, `theme:onboarding`, …) are its own. This
+repository's axis should be [VISION.md](VISION.md)'s ranked proposal sources —
+`theme:consumer-friction`, `theme:contract-gap`, `theme:release-confidence` —
+because that ordering is what a framework's research should be weighted by.
+
+### Required repository inputs
+
+| Input | Kind | Status here |
+|---|---|---|
+| `CLAUDE_CODE_OAUTH_TOKEN` | secret | **not set** — every LLM loop gates on it being non-empty and skips silently otherwise |
+| `GITHUB_TOKEN` | automatic | fine |
+| `AUTOMERGE_MODE` | variable | n/a until auto-merge is decided |
+| `MAINTAINER_LOGINS` | inline in the conflict resolver | `swampratnz`, unchanged |
+| the label set above | labels | **absent** — `status:approved` 404s today |
+| a governance-path list | inline in auto-merge | must be rewritten: this repo's is `.github/`, `scripts/`, `package.json`, `CLAUDE.md`, `docs/SECURITY.md`, `docs/VISION.md`, and **`publish.yml` above all** |
+
+---
+
+## Would it work today?
+
+Checked rather than assumed, because "documented" and "would run" are different
+claims and only one of them is cheap.
+
+| # | Finding | Severity |
+|---|---|---|
+| 1 | **No labels.** `status:approved` does not exist, and the build worker triggers on `label` events for exactly that name. Nothing could ever start. There is no `setup-labels.yml`/`scripts/setup-labels.sh` here either. | blocker, trivial fix |
+| 2 | **No `CLAUDE_CODE_OAUTH_TOKEN`.** Every LLM loop checks `secrets.CLAUDE_CODE_OAUTH_TOKEN != ''` and no-ops when empty — so a port would appear installed and do nothing, which is worse than failing. | blocker, trivial fix |
+| 3 | **The build worker's gate no longer equals CI.** See below. | blocker, real work |
+| 4 | `imports:check` is named in the build worker's prompt and does not exist here (deliberately — see CLAUDE.md). A ported prompt would instruct an agent to run a missing script. | small |
+| 5 | `theme:*` values are community-specific and would seed a framework's research with a consumer's categories. | small |
+| 6 | Two-repo changes still have no mechanism. | design work |
+
+### Finding 3, because it is the one that is new
+
+community-agent's rule, in its `CLAUDE.md`:
+
+> the build worker runs the **full CI gate** … BEFORE opening a PR, so "green
+> locally" matches CI. Keep it that way when editing either `pipeline-build.yml`
+> or `ci.yml` — they must run the same checks.
+
+That worked because its whole gate is a list of `npm run …` commands, and its
+`ci.yml` runs exactly those.
+
+**That equivalence broke here today.** Layer 1 added `consumption.yml` — five
+jobs across two workflows — and promoted the canary to a PR gate. None of it is
+reachable by `npm run …`: the pack/scaffold/install sequence, the toolchain
+matrix, the Windows and macOS packs and the cross-repo canary are all
+workflow-level. A build worker would run the npm gates, correctly believe it
+was green, open a PR, and then discover Consumption or Canary red — which is
+precisely the "green locally, red in CI" loop the rule exists to prevent, and
+the loop most likely to burn a retry budget.
+
+The fix is to make the sequence runnable, not to weaken the rule: extract the
+consumption test into `scripts/consumption-test.mjs`, expose it as
+`npm run test:consumption`, and have `consumption.yml` invoke that script rather
+than inline bash. Then the gate list is a list of npm scripts again, the build
+worker can run it, and a contributor gets the same check locally — which is the
+same principle that put every other gate behind an npm script. The
+cross-platform and toolchain matrices stay workflow-level by nature, and the
+honest answer there is that a build worker cannot reproduce them, so they should
+be understood as post-merge signals rather than pre-PR ones.
+
+Tracked as an issue rather than folded in here.
+
 ---
 
 ## Correction: "the pipeline as reusable workflows"
