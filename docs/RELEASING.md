@@ -185,7 +185,7 @@ it, so the failure is a one-line message rather than a dead release.
 
 Open the PR, let CI go green, merge to `main`. Nothing publishes yet.
 
-### Step 3 — tag and push
+### Step 3 — tag the merged commit
 
 From the merged commit on `main`:
 
@@ -200,13 +200,36 @@ compares them and refuses a mismatch — that is the classic release footgun
 (tag `v0.2.0` pushed while `package.json` still says `0.1.1`), and npm would
 otherwise cheerfully publish something the tag does not name.
 
-Pushing the tag is what triggers the publish. There is no other trigger for a
+Creating the tag is what triggers the publish. There is no other trigger for a
 real publish: a manual run with `dry_run: false` from a branch is rejected,
 because it would publish an untagged tree.
 
+#### …or tag from the browser
+
+**Releases → Draft a new release → Choose a tag → type `v0.1.2` → Create new
+tag on publish →** target `main` **→ Publish release.**
+
+Identical outcome: GitHub creates the tag, which fires the same
+`push: tags: v*.*.*` event, and the workflow cannot tell the two apart. Use
+whichever is to hand — the shell is not privileged here.
+
+Worth knowing because it is not merely a convenience. An automated session
+working in this repository may not be able to push a tag at all: a sandboxed
+environment's git credential can be scoped to `refs/heads/*`, in which case a
+tag push returns **HTTP 403** while branch pushes keep working, and git reports
+it as `send-pack: unexpected disconnect` with the status buried in the sideband
+packet. That is not a fault to debug — it is the environment saying no. The
+browser path routes around the *credential*, not the *guard*: the tree is still
+the merged `main`, the tag/version match is still asserted, and the whole gate
+set still runs before `npm publish`.
+
+The GitHub release notes are optional and carry no weight — the tag is what
+publishes. Do not use "Save draft": a draft release creates no tag and
+therefore triggers nothing.
+
 ### What the workflow does
 
-That is the whole procedure — bump, commit, tag, push. **No token is created,
+That is the whole procedure — bump, merge, tag. **No token is created,
 rotated, or entered anywhere**, and nothing else is manual.
 
 The workflow, in one job, in this order:
