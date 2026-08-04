@@ -25,7 +25,7 @@ reaches the consumer as a version bump.
 | 1     | Reify the seams: tool registry, config slices, storage fragments + hooks, job registry, strings catalogue, router intercepts, prompt slots, adapter factory | community-agent | **landed**, and lifted here |
 | 2     | Two packages in one repo (`src/base/` / `src/module/`), one-way import rule                                                                                 | community-agent | **done, then superseded** — the split landed and the extraction then removed `src/base/` entirely; the one-way gate now enforces that it stays gone |
 | 3     | Extract: runtime packages, gate scripts, pipeline as reusable workflows, repo template                                                                      | here            | **largely done** — runtime, gates and template shipped, `0.1.0`/`0.1.1`/`0.2.0` published; the pipeline as reusable workflows has not started |
-| 4     | Prove the seams: scaffold the personal-finance agent from the template                                                                                      | new repo        | not started          |
+| 4     | Prove the seams: scaffold the personal/household agent from the template — [**PHASE-4-PERSONAL-AGENT.md**](PHASE-4-PERSONAL-AGENT.md)                       | new repo        | planned              |
 
 ### Where the seams actually stand
 
@@ -85,6 +85,30 @@ dependency, and composed through `createAgent`. The canary is on and green.
 
 Still to come: the pipeline as reusable workflows (this repo ships none today —
 only `ci.yml`, `publish.yml` and the canary), and Phase 4.
+
+### Phase 4 is planned, and it names two seams to close
+
+[PHASE-4-PERSONAL-AGENT.md](PHASE-4-PERSONAL-AGENT.md) is the build plan for
+the second consumer — a two-person household agent over WhatsApp, with
+calendars, mail, lists and read-only finance. It is worth reading from this
+repo's side for what it found, which is the point of having a second consumer
+at all: a deployment whose users are **two maximally-trusted people** rather
+than many low-trust ones stops using the tier lattice as its real boundary, and
+lands on two `planned` seams almost immediately.
+
+- **`configSchema`** blocks it at day one. A module cannot declare an env var,
+  so a consumer's OAuth credentials would have to become fields in a slice
+  *here* — in the framework that is supposed to be domain-agnostic. There is a
+  workable interim (parse your own env in `init()`, which keeps the fail-fast
+  property), so this is a Phase-2-of-that-build item, not a prerequisite.
+- **`registerRuntimeSecret`** is the sharper one and the smaller fix.
+  `runtimeSecrets()` lists base credentials only, so a module's outward
+  credential is not covered by the exact-value redaction every adapter send
+  path applies. A consumer holding OAuth refresh tokens for two mailboxes needs
+  this before its first token exists.
+
+Both are already marked `planned` in [MODULE-API.md](MODULE-API.md); what Phase
+4 adds is a consumer that makes them concrete rather than theoretical.
 
 **Measured, and it revises the Phase 0 wording.** community-agent's nine
 pipeline workflows are ~3,700 lines, of which the deterministic no-LLM ones
