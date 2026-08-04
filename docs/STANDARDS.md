@@ -25,9 +25,20 @@ npm run typecheck && npm run lint && npm run format:check \
 CI runs exactly this, in three jobs. Run it before opening or updating a PR —
 a red PR only makes rework.
 
+**Run the whole line, not `npm test` alone.** `npm test` does not check
+`tests/security-floor.json`; `npm run test:security` is the only thing that
+does, and CI runs it in its own job. A case in
+`tests/securityFloorGate.test.ts` used to cover that gap by spawning the whole
+`SECURITY:` suite from inside `npm test` — until it turned out to be running
+`repository.test.ts`'s 117 DB-backed cases twice against one database, and
+reddening unrelated PRs (issue #18). A convenience that fabricates a second
+concurrent test runner is not worth its keep; running the documented gate is.
+
 `migrate` needs `DATABASE_URL` on a Postgres 16 + pgvector database and nothing
 else. Use your **own** database, never a sibling repo's: `node:test` runs test
-FILES in parallel, so concurrent runs corrupt each other's fixtures.
+FILES in parallel, so concurrent runs corrupt each other's fixtures. The same
+rule is why nothing inside the suite may spawn a second runner over the same
+database.
 
 ## Tests
 
