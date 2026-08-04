@@ -17,7 +17,6 @@ agent, a personal finance agent, …) plug in as **modules**.
 |---|---|
 | `src/` | the **runtime**: agent kernel and prompt spine, platform adapters, storage + 26 SQL fragments, the router spine, jobs, auth, config, notices |
 | `src/createAgent.ts` | the **composition entry point**: `createAgent({ modules })`, and the registration order it owns |
-| `src/module-api/` | the published **v0 contract** for the extension points whose runtime is not reified as registration yet |
 | `tests/` | the suite that came across with the code, including the `SECURITY:` cases the floor gate counts |
 | `scripts/` | the **gates** — the security-test floor and the context-pack freshness check, generalised to multi-root layouts |
 | `.github/workflows/` | CI running the full gate set, the tag-triggered publish, and a **canary** that builds community-agent against this commit |
@@ -100,11 +99,10 @@ Two things that will not change:
   that would silently mean a narrower tool surface.
 
 [`docs/MODULE-API.md`](docs/MODULE-API.md) documents every extension point
-function by function, and its contract-vs-code table lists where the v0 types
-in `src/module-api/` still differ from the live ones. Read that before
-believing a type: the barrel exports **two** `AgentModule` shapes, and
-`createAgent`'s — re-exported as `AgentModuleManifest` — is the one that runs
-(issue #10).
+function by function, marking each **live**, **partial** or **planned**. Every
+type the barrel exports is a live one, from the file that runs it — a planned
+extension point is described there and exports nothing, because a type is a
+stronger claim than a paragraph and somebody will build against it.
 
 ## Quickstart
 
@@ -163,7 +161,7 @@ src/platforms/      the adapter contract and the Discord / WhatsApp adapters
 src/storage/        pool, embeddings, schema fragments + migrator, lifecycle registries
 src/router.ts       the hot path; src/routerIntercepts.ts holds the frozen pre-turn spine
 src/auth/           tiers and role resolution; src/strings/ the notice catalogue
-src/module-api/     the v0 contract types for the not-yet-reified extension points
+src/index.ts        the public barrel — live types only, from the files that run them
 tests/              the lifted suite, including every SECURITY: case the floor counts
 scripts/            the gates (security floor, context pack, dist schema)
 docs/               ROADMAP · MODULE-API · SECURITY · ARCHITECTURE · STANDARDS · RELEASING

@@ -68,7 +68,6 @@ is marked **🔒**.
 - `src/logger.ts` — The pino logger plus the hashing helper used to keep identifiers out of logs.
 - `src/media/` — Local-only media handling: the one Whisper voice-transcription module all three adapters share, decoded on-host and never shipped to a third party.
 - `src/moderation/` — Two-stage moderation: a zero-cost wordlist pass over a module-registered default term list, then a model pass, with admins and super admins exempt. The enforcer is injected so the platform side stays swappable.
-- `src/module-api/` — 🔒 The published v0 base↔module CONTRACT for the extension points whose runtime is not lifted yet (adapters, jobs, ingest sources). Registration shapes only. Where it and `createAgent.ts`'s `AgentModule` disagree, `createAgent.ts` is what runs.
 - `src/mutedRoleAlertNotice.ts` — Pure debounce for the super-admin alert raised when Discord muted-role permission overwrites exhaust their retries.
 - `src/notifications.ts` — The shared super-admin DM fan-out every alert producer delegates to (connected-adapters-only, window-reopen queueing, optional queue-on-outage), plus the rolling-hour alert-slot reserver factory behind the router's and moderator's guild-wide alert caps.
 - `src/pauseNotice.ts` — Pure debounce for the "the bot is paused" reply, on a longer window than the rate-limit notice because a pause is longer-lived. The text itself is served from the catalogue at the router's call site.

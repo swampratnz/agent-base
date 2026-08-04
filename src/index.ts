@@ -3,70 +3,88 @@
  *
  * The runtime is here: the router spine, the turn engine, the adapters,
  * storage and the scheduler all live under `src/` and ship compiled in
- * `dist/`. This file is a ~15-symbol convenience surface over it —
- * `createAgent`, the notice catalogue, the migration runner, the schema
- * manifest, and the module-API types. Anything else is imported by its own
+ * `dist/`. This file is a convenience surface over it — `createAgent`, the
+ * notice catalogue, the migration runner, the schema manifest, and the types a
+ * module manifest is written in terms of. Anything else is imported by its own
  * path (`@swampratnz/agent-base/router.js`); the exports map wildcards every
  * compiled module, so the barrel is deliberately NOT the whole API.
  *
- * Two `AgentModule` types are exported and they are not the same shape. The
- * one re-exported below as `AgentModuleManifest` is `createAgent`'s, and it is
- * what actually runs. `./module-api/module.js`'s is the published v0 CONTRACT,
- * kept for the extension points whose runtime is not reified as registration
- * yet (adapters, jobs, ingest sources) — see docs/MODULE-API.md's
- * contract-vs-code table, and issue #10.
+ * **Every type re-exported here is a live one, from the file that runs it.**
+ * That is a rule, not an accident. Until 0.1.1 this barrel re-exported the v0
+ * contract types in `src/module-api/` — sketches of the intended final shape of
+ * each seam, written before the extraction — alongside the real ones, which
+ * meant the package exported two different `AgentModule` types (issue #10) and
+ * a `ToolDef` the tool server would reject. A type is a stronger claim than a
+ * document: nobody builds against a paragraph, but everybody builds against an
+ * exported interface. So a seam whose runtime does not exist yet is described
+ * in docs/MODULE-API.md — under `planned`, with where the behaviour lives today
+ * — and exports nothing from here.
+ *
+ * Deep-import paths are unaffected either way; a module that already imports
+ * `@swampratnz/agent-base/agent/tools/types.js` was always getting the live
+ * type and still is.
  */
 
-export type {
-  AlertPriority,
-  CallerContext,
-  NotifyRequest,
-  Platform,
-  Tier,
-  TurnStateBag,
-} from './module-api/types.js';
-export type { ToolContext, ToolDef } from './module-api/tools.js';
-export type {
-  CommandDef,
-  IncomingMessageView,
-  InterceptStage,
-  JobSpec,
-  PostTurnHandler,
-  PreTurnIntercept,
-} from './module-api/runtime.js';
-export type {
-  MigrationFragment,
-  ProvenanceTrust,
-  PurgeContributor,
-  Queryable,
-  StorageLifecycleHooks,
-} from './module-api/storage.js';
-export type { Persona, PromptSections, StringsPack } from './module-api/presentation.js';
-export type { AdapterFactory, AdapterTextPack, InboundContentPolicy } from './module-api/platform.js';
-export type {
-  DigestSignal,
-  IngestSource,
-  QueueProvider,
-  RefreshTopic,
-  SkillsManifest,
-} from './module-api/content.js';
-export type { AgentModule } from './module-api/module.js';
-
-// --- The runtime, lifted from community-agent's src/base/ -------------------
+// --- The composition entry point --------------------------------------------
 //
-// The module-API types above stay as the published v0 CONTRACT for the
-// extension points whose runtime has not been lifted yet. Everything below is
-// live code. `createAgent` is the composition entry point; where its
-// `AgentModule` and `module-api/module.ts`'s disagree, createAgent's is what
-// actually runs.
+// `AgentModule` is `createAgent`'s, because it is the one `createAgent` takes.
+// `AgentModuleManifest` remains as an alias: it is the name the first consumer
+// imports, and it reads better at the one site that names the type.
 export {
   createAgent,
   planComposition,
   assertRegistrationsComplete,
   type Agent,
+  type AgentModule,
   type AgentModule as AgentModuleManifest,
   type CreateAgentOptions,
 } from './createAgent.js';
+
+// --- Identity, callers, tiers ------------------------------------------------
+export type { Platform, Tier } from './platforms/types.js';
+export type { CallerContext } from './auth/rbac.js';
+
+// --- Tools -------------------------------------------------------------------
+//
+// `ToolDef` is the tool-server's own shape (a `ZodRawShape`, `readOnlyHint`,
+// `requiresCapability`), not the v0 sketch's. `ToolServerParts<Ctx>` is the
+// registration a module hands in; `Ctx` is the module's own per-turn tool
+// context, which the base never looks inside.
+export { defineTool, type ToolContext, type ToolDef, type ToolResult } from './agent/tools/types.js';
+export type { ToolServerParts } from './agent/toolServer.js';
+export type { ToolTierRegistration } from './auth/rbac.js';
+export type { FlaggedToolPredicate } from './agent/featureFlags.js';
+
+// --- Router seams ------------------------------------------------------------
+//
+// Intercepts act through the router (`'continue' | 'handled'`) rather than
+// returning reply text, and the spine they append to is frozen.
+export type {
+  PreTurnContext,
+  PreTurnIntercept,
+  PostTurnContext,
+  PostTurnHandler,
+} from './routerIntercepts.js';
+export type { TurnStateBag, TurnStateFinalizer } from './agent/turnState.js';
+export type { RegisteredCommand } from './commands/registry.js';
+
+// --- Storage -----------------------------------------------------------------
+export { migrate, type ModuleMigrationFragment } from './storage/migrate.js';
+export { SCHEMA_FRAGMENTS, loadSchemaSql } from './storage/schema/manifest.js';
+export type { Queryable } from './storage/repository/shared.js';
+export type { LifecycleIdentity, PurgeContributor } from './storage/lifecycle.js';
+export type { ProvenanceTrust } from './storage/provenance.js';
+
+// --- Prompt, persona, skills -------------------------------------------------
+//
+// The prompt slot set is CLOSED (`ModulePromptSections`) and stays that way: an
+// open set would let registration introduce prompt text at an unreviewed
+// position. The style/language slot bodies are open maps, so nothing is lost.
+export type { ModulePromptSections } from './agent/promptSpine.js';
+export type { Persona } from './agent/personaRegistry.js';
+export type { SkillsManifest } from './agent/skillsManifest.js';
+
+// --- Strings -----------------------------------------------------------------
 export {
   BASE_NOTICE_IDS,
   notice,
@@ -80,5 +98,18 @@ export {
   type NoticeSelection,
   type NoticeValue,
 } from './strings/catalogue.js';
-export { migrate, type ModuleMigrationFragment } from './storage/migrate.js';
-export { SCHEMA_FRAGMENTS, loadSchemaSql } from './storage/schema/manifest.js';
+
+// --- Platforms ---------------------------------------------------------------
+export type { AdapterFactory } from './platforms/registry.js';
+export type { AdapterPolicyText, AdapterTextPack, PlatformAdapter } from './platforms/types.js';
+
+// --- Alerts ------------------------------------------------------------------
+export type { AlertPriority } from './pendingAlertQueue.js';
+
+// --- Jobs --------------------------------------------------------------------
+//
+// `JobSpec` is the live `{ enabled(cfg), start(adapters) }` shape. There is no
+// `jobs` field on the manifest yet — a deployment composes its own job list and
+// hands it to the scheduler — so this is exported to be written against, not
+// registered. See docs/MODULE-API.md § Jobs.
+export type { JobSpec } from './jobs/types.js';

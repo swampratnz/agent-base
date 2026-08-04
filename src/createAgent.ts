@@ -91,10 +91,14 @@ import { logger } from './logger.js';
  * requirement is on the composition as a whole (step 1), not on any one
  * module.
  *
- * This is the LIVE contract, typed against the registries that actually
- * exist. `src/module-api/*` remains the published v0 shape for the extension
- * points whose runtime has not been lifted yet (adapters, jobs, ingest
- * sources); where the two disagree, this file is what runs.
+ * This is THE contract, and since #10 the only one: it is typed against the
+ * registries that actually exist, and the barrel exports it — as both
+ * `AgentModule` and the alias `AgentModuleManifest`. It used to share the
+ * `AgentModule` name with a v0 sketch under `src/module-api/`, which a module
+ * author could build against by accident because both were exported and
+ * neither mentioned the other at the point of import. Extension points whose
+ * runtime does not exist yet are described in docs/MODULE-API.md under
+ * `planned`, and export no type at all.
  *
  * `Ctx` is the module's own per-turn tool-context type — the thing its
  * `toolServerParts.makeContext` builds and its tool handlers receive. The base

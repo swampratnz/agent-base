@@ -14,13 +14,19 @@ code wins and the difference is called out.
 > the consumer has `src/module/agent/tools/index.ts` — so the distinction is
 > worth reading carefully before opening a file that is not here.
 
-Read [`../src/module-api/`](../src/module-api/) alongside this — those are the
-v0 contract types, which describe the same seams in their *intended* final
-shape. Where the two differ, the differences are enumerated in
-[§ Contract vs. code](#contract-vs-code) at the end. Note that the barrel
-exports **two** `AgentModule` types: `createAgent`'s live one (re-exported as
-`AgentModuleManifest`) and the v0 contract's. They are not interchangeable and
-only the first runs — issue #10.
+There is exactly one module contract: `AgentModule` in
+[`../src/createAgent.ts`](../src/createAgent.ts), which the barrel re-exports
+under that name and as `AgentModuleManifest`. Every other type the barrel
+exports is likewise a live one, from the file that runs it.
+
+That is worth stating because it was not always true. Through `0.1.1` a
+`src/module-api/` directory held v0 contract types — the same seams in their
+*intended* final shape — and the barrel exported them next to the real ones. So
+the package advertised two different `AgentModule`s and a `ToolDef` the tool
+server would reject, and nothing failed, because the only consumer imported the
+live types by their deep paths (issue #10). The sketches are gone; the seams
+they described without implementing are marked `planned` below, and export
+nothing.
 
 ---
 
@@ -30,15 +36,14 @@ only the first runs — issue #10.
 |---|---|
 | **live** | A real registration API exists, and a module supplies it through the `AgentModule` manifest. The signature shown is the actual one. |
 | **partial** | The seam is reified — the base no longer hard-codes the content — but registration is static composition (an array or an object literal in one file), not something a module can hand in. |
-| **planned** | No implementation. The plan names the extension point; nothing registers anything yet. Do not build against it. |
+| **planned** | No implementation. The plan names the extension point; nothing registers anything yet. Nothing is exported for it either — see [§ Not implemented yet](#not-implemented-yet) for where the behaviour lives today. |
 
 The runtime has landed by extraction (see [ROADMAP.md](ROADMAP.md)): `src/`
 holds the agent kernel, adapters, storage, router spine, jobs, auth and
-config, and `src/createAgent.ts` is the composition entry point. The
-`src/module-api/` types remain the published **v0 contract** for the
-extension points whose runtime is not yet reified as registration; where they
-and the live code disagree, the [contract-vs-code table](#contract-vs-code)
-says so and the live code wins.
+config, and `src/createAgent.ts` is the composition entry point. Every
+signature shown below is read off that code, so a **live** or **partial**
+marking is a statement about a function that exists; **planned** means the
+seam has a name and a plan and nothing else.
 
 ---
 
@@ -300,9 +305,10 @@ import-time singleton, which is the chokepoint the plan lists first.
 
 The cross-repo consequence is the sharp one: a new env var means a new field in
 a slice **here**, so it is a base change and a version bump, not something a
-consuming module can add. (`AgentModule` in `src/module-api/module.ts` does
-declare `configSchema` — that is the v0 contract's aspiration, and nothing
-reads it.)
+consuming module can add. (The v0 contract declared a `configSchema` field on
+the manifest; nothing ever read it, and it went with the rest of the sketches
+in #10. When this becomes real it will be a field on the live `AgentModule`
+plus a two-phase init that hands each module its parsed slice.)
 
 ---
 
@@ -702,8 +708,10 @@ model-facing platform arguments remain **closed** zod enums.
 ### Adapter text packs
 
 **live.** `AdapterTextPack` and `AdapterPolicyText` in
-`src/platforms/types.ts`. (`src/module-api/platform.ts` exports a v0 type of
-the same name through the barrel — the adapters take the one below.)
+`src/platforms/types.ts`, and these are what the barrel exports. (Through
+`0.1.1` it exported a v0 type of the same name instead — one of the #10
+collisions, and the quieter kind: same name, different fields, no error until
+something was actually constructed.)
 
 ```ts
 export interface AdapterTextPack {
@@ -807,31 +815,36 @@ implementation**. Documented here so nobody builds against them:
 | ~~`migrations` per module~~ | **live** — `AgentModule.migrations`, appended after every base fragment |
 
 ---
+## What the v0 contract got wrong
 
-## Contract vs. code
+Through `0.1.1` this repository shipped two descriptions of every seam: the
+live code, and a `src/module-api/` of v0 contract types written before the
+extraction, describing each seam in its *intended* final shape. Both were
+exported from the barrel. Issue #10 closed that by deleting the sketches and
+pointing the barrel at the live types — so there is nothing left to tabulate as
+a difference.
 
-Differences between this package's v0 types in `src/module-api/` and the code
-they describe. The extraction has landed, so each row is now a reconciliation
-decision somebody owes — bring the type to the code, or change the code — and
-`src/module-api/` stays published in the meantime because it is the only
-description of the seams whose runtime is not reified as registration yet:
+The table is kept because the differences are the interesting part: each row is
+a place the aspiration and the implementation disagreed, and which one won.
+Where the code won, it is usually because the code knew something the plan did
+not.
 
-| Contract type | Code today | Note |
+| The v0 contract said | The code says | Which won, and why |
 |---|---|---|
-| `AgentModule` (`src/module-api/module.ts`) | `AgentModule<Ctx>` (`src/createAgent.ts`), re-exported as `AgentModuleManifest` | **The one to know.** Both are exported from the barrel and they are not assignable to each other — the v0 `init(ctx)` alone makes it a TS2322. The live one is what `createAgent` takes, and its field set is different: no `configSchema`, `tools`, `jobs`, `adapters`, `strings`, `runtimeSecrets` or `purge`; instead `toolServerParts`, `toolTiers`, `flaggedToolPredicates`, `notices`, `defaultBadWords`, `policyKeys`, `provenance`, `purgeContributors`. Tracked as issue #10. |
-| `JobSpec { intervalMs, runOnce() }` | `JobSpec { enabled(cfg), start(adapters) }` | The code is deliberate and documented: today's cadences are heterogeneous and one `intervalMs` would misdescribe most of them. The contract is the aspiration. |
-| `ToolDef.capabilityLine`, `ToolDef.rateLimit` | neither field exists | Capability rundown text is still static prose in a tools domain file; rate reservations are separate helpers the handlers call. |
-| `ToolDef.schema: z.ZodTypeAny` | `schema: ZodRawShape` | The SDK's `tool()` helper takes a raw shape; the contract assumes a full zod type. |
-| `ToolDef.readOnly?` | `readOnlyHint` (required) | Name and optionality both differ. |
-| `ToolDef` has no capability field | `requiresCapability` exists and is *enforced* | The code is ahead of the contract here — availability is derived-and-verified, not declared. |
-| `ToolContext.requireConfirm(spec)` returning `string` | `requireConfirm(description, minTier, run)` returning `ToolResult` | Positional, and returns the tool result shape. |
-| `ToolContext.audited(kind, params, run)` | `audited({ actionKind, targetUserId?, conversationId?, params?, run })` | Object form, with target/conversation fields. |
-| `ToolContext.callerScope(): Promise<string[]>` | `Promise<string[] \| null>` | `null` means unrestricted (super admin) — a meaningful third state the contract loses. |
-| `ProvenanceTrust = 'quarantined' \| 'trusted' \| 'human-tier'` | `'quarantined' \| 'trusted'` | Human tiers are registered as `trusted` explicitly rather than being a third kind. |
-| `PurgeContributor.purge(platform, userId, tx)` | `purge(id: LifecycleIdentity, tx)`, plus required `name` and `order` | The order field is the important omission: iteration order must be explicit, not load order. |
-| `TurnStateBag = Map<string, unknown>` | an interface declaring the five keys base's own post-turn handlers read, augmentable by a module for its own | The code keeps concrete per-key types; the contract erases them. Base has to declare the keys it READS — nothing else in the tree writes them, so an empty interface left base's own router uncompilable. |
-| `PreTurnIntercept.handle() => string \| null` | `run(ctx) => 'continue' \| 'handled'` | The code's intercepts act through the router rather than returning reply text. |
-| `AdapterTextPack` with a `variants` map | `warnUserDmPrefixByLanguage?: Record<string, string>` plus a required `policyText` | Resolved during the lift: the fixed `warnUserDmPrefixMi` field became an open per-language map keyed by the registered axis, so base names no locale. Same idea as the contract's `variants`, one level flatter. The contract has no equivalent of `policyText`, the stored-policy half the adapters require. |
-| `AgentModule.name` doubles as the MCP namespace | the MCP server name is registered via `registerToolServerParts({ name })` | Same idea, different carrier. |
-| `strings` pack registered per module | exactly ONE notice pack per process, and it must cover every id in `BASE_NOTICE_IDS` | `registerNoticePack` throws on a second call, and now also on an INCOMPLETE first call, naming every missing id — base declares the ids it serves and a pack supplies the text. Multi-module string packs still need a merge step that does not exist; `createAgent` refuses two claimants rather than silently picking one. |
-| `promptSections` as an open set | a **closed**, all-required slot set (`ModulePromptSections`) | The code's version is stronger and should win: an open set would let registration introduce prompt text at an unreviewed position. The style/language slot BODIES are open maps keyed by the caller's raw preference, so the closed slot set costs no localisation flexibility. |
+| `AgentModule` with `configSchema`, `tools`, `jobs`, `adapters`, `strings`, `runtimeSecrets`, `purge`, and an `init(ctx)` taking parsed config | `AgentModule<Ctx>` with `toolServerParts`, `toolTiers`, `flaggedToolPredicates`, `notices`, `defaultBadWords`, `policyKeys`, `provenance`, `purgeContributors`, and a nullary `init()` | **The code.** The two were not assignable in either direction — the `init` signature alone made it a TS2322 — so a module author who picked the wrong one found out at the first `createAgent` call. The v0 field names describe seams that are still `planned`; they are listed above, not typed. |
+| `JobSpec { intervalMs, runOnce() }` | `JobSpec { enabled(cfg), start(adapters) }` | **The code**, deliberately. Today's cadences are heterogeneous and a single `intervalMs` would misdescribe most of them. The contract remains the aspiration for a scheduler that owns cadence. |
+| `ToolDef.capabilityLine`, `ToolDef.rateLimit` | neither field exists | **The code, for now.** Capability rundown text is static prose in a tools domain file; rate reservations are separate helpers the handlers call. Both are worth folding into the def eventually — that is what makes a def the single source. |
+| `ToolDef.schema: z.ZodTypeAny` | `schema: ZodRawShape` | **The code.** The SDK's `tool()` helper takes a raw shape; a full zod type would have to be unwrapped at every registration. |
+| `ToolDef.readOnly?` | `readOnlyHint` (required) | **The code.** Required, because a missing annotation and a false one are not the same claim. |
+| `ToolDef` had no capability field | `requiresCapability`, and it is *enforced* | **The code**, which was ahead of the plan: `assertToolAvailabilityConsistent` checks at startup that a tool's platform list is exactly the platforms whose adapters declare the capability. Derived-and-verified, never hand-mirrored. |
+| `ToolContext.requireConfirm(spec)` returning `string` | `requireConfirm(description, minTier, run)` returning `ToolResult` | **The code.** Positional, and it returns the tool result shape so a handler cannot accidentally send the confirm prompt itself. |
+| `ToolContext.audited(kind, params, run)` | `audited({ actionKind, targetUserId?, conversationId?, params?, run })` | **The code.** The object form carries the target and conversation an audit row needs to be scoped later. |
+| `ToolContext.callerScope(): Promise<string[]>` | `Promise<string[] \| null>` | **The code.** `null` means unrestricted (super admin) — a third state the contract erased into an empty array, which reads as "no access" at every call site. |
+| `ProvenanceTrust = 'quarantined' \| 'trusted' \| 'human-tier'` | `'quarantined' \| 'trusted'` | **The code.** Human tiers register as `trusted` explicitly. A third kind that means "inherit from somewhere else" is a trust decision made at read time, which is exactly where it should not be. |
+| `PurgeContributor.purge(platform, userId, tx)` | `purge(id: LifecycleIdentity, tx)`, plus required `name` and `order` | **The code.** `order` is the load-bearing part: purge iteration order must be explicit, not module load order. |
+| `TurnStateBag = Map<string, unknown>` | an interface declaring the keys base's own post-turn handlers read, augmentable by a module | **The code.** Base has to declare the keys it READS — nothing else in the tree writes them, so an untyped bag left base's own router uncompilable. |
+| `PreTurnIntercept.handle() => string \| null` | `run(ctx) => 'continue' \| 'handled'` | **The code.** Intercepts act through the router rather than returning reply text, so one cannot bypass the outbound filter by returning a string. |
+| `AdapterTextPack` with a `variants` map | `warnUserDmPrefixByLanguage?: Record<string, string>` plus a required `policyText` | **Both, merged during the lift.** The fixed `warnUserDmPrefixMi` field became an open per-language map keyed by the registered axis — the contract's idea, one level flatter — so base names no locale. The contract had no equivalent of `policyText`, the stored-policy half the adapters require. |
+| `AgentModule.name` doubles as the MCP namespace | the MCP server name is registered via `registerToolServerParts({ name })` | **The code.** Same idea, different carrier; a module's identity and its tool namespace are not obliged to be the same string. |
+| `strings` pack registered per module | exactly ONE notice pack per process, covering every id in `BASE_NOTICE_IDS` | **The code.** `registerNoticePack` throws on a second call and on an INCOMPLETE first call, naming every missing id. Multi-module packs need a merge step that does not exist; `createAgent` refuses two claimants rather than silently picking one. |
+| `promptSections` as an open set | a **closed**, all-required slot set (`ModulePromptSections`) | **The code, and this one is a security property.** An open set would let registration introduce prompt text at an unreviewed position. The style/language slot BODIES are open maps keyed by the caller's raw preference, so the closed slot set costs no localisation flexibility. |
