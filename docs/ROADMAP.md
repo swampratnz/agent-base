@@ -24,7 +24,7 @@ reaches the consumer as a version bump.
 | 0     | Decisions: distribution (npm + reusable workflows), naming, module API v0                                                                                   | here            | **done** — this seed |
 | 1     | Reify the seams: tool registry, config slices, storage fragments + hooks, job registry, strings catalogue, router intercepts, prompt slots, adapter factory | community-agent | **landed**, and lifted here |
 | 2     | Two packages in one repo (`src/base/` / `src/module/`), one-way import rule                                                                                 | community-agent | **done, then superseded** — the split landed and the extraction then removed `src/base/` entirely; the one-way gate now enforces that it stays gone |
-| 3     | Extract: runtime packages, gate scripts, pipeline as reusable workflows, repo template                                                                      | here            | **largely done** — runtime, gates and template shipped, `0.1.0`/`0.1.1`/`0.2.0` published; the pipeline as reusable workflows has not started |
+| 3     | Extract: runtime packages, gate scripts, pipeline as reusable workflows, repo template                                                                      | here            | **largely done** — runtime, gates and template shipped, `0.1.0`/`0.1.1`/`0.2.0`/`0.3.0` published; the pipeline as reusable workflows has not started |
 | 4     | Prove the seams: scaffold the personal/household agent from the template — [**PHASE-4-PERSONAL-AGENT.md**](PHASE-4-PERSONAL-AGENT.md)                       | new repo        | planned              |
 
 ### Where the seams actually stand

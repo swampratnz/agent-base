@@ -10,14 +10,18 @@ agent, a personal finance agent, …) plug in as **modules**.
 
 ## Status: published, with one consumer
 
-`@swampratnz/agent-base` is on public npm — `0.2.0` is `latest` — and
+`@swampratnz/agent-base` is on public npm — `0.3.0` is `latest` — and
 `community-agent` consumes it: it has no `src/base/` of its own any more.
 
-`0.2.0` is a **breaking** release, which under `0.x` is a minor bump (see
-[docs/ROADMAP.md](docs/ROADMAP.md)'s contract-stability note): the barrel now
-re-exports live types only, so the v0 contract types it used to export
-alongside them are gone. A consumer that imports its types by their deep paths
-— as community-agent does — is unaffected.
+Both `0.2.0` and `0.3.0` are **breaking** releases, which under `0.x` are minor
+bumps (see [docs/ROADMAP.md](docs/ROADMAP.md)'s contract-stability note):
+
+- **`0.3.0`** moved `@whiskeysockets/baileys` from a dependency to an
+  **optional peer**, so the framework installs on npm 12. If you use the
+  WhatsApp Baileys provider, add it to your own dependencies — see below.
+- **`0.2.0`** made the barrel re-export live types only, so the v0 contract
+  types it used to export alongside them are gone. A consumer that imports its
+  types by their deep paths — as community-agent does — is unaffected.
 
 | | |
 |---|---|

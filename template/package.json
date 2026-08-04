@@ -29,7 +29,7 @@
   },
   "_comment_dependencies": "The agent-base range is a CARET ON A 0.x MAJOR, so it pins the MINOR: ^0.2.0 means >=0.2.0 <0.3.0, not >=0.2.0 <1.0.0. That is what a scaffolded repo wants — the module API is v0 and a breaking change to it is a minor bump (see the framework's ROADMAP.md), so a caret here admits patches and refuses the breaking ones. It also means this line does NOT float: every framework minor needs bumping here deliberately. It was left at ^0.1.1 across the 0.2.0 release, which silently scaffolded new repos onto the version whose exports map had no `default` condition (issue #21).",
   "dependencies": {
-    "@swampratnz/agent-base": "^0.2.0",
+    "@swampratnz/agent-base": "^0.3.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
