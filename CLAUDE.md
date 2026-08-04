@@ -120,13 +120,13 @@ the copy step in the build script is what puts them in `dist/`. A forgotten or
 partial copy would otherwise surface only as an ENOENT from `migrate:prod` on
 the deploy box.
 
-There is **no `imports:check` here**, deliberately. community-agent needs it
-because that repo holds both halves and the one-way `src/base/` → `src/module/`
-rule has to be mechanically enforced. This repo has only the base half: there
-is no module directory to import from, so the rule is enforced by the
-repository boundary itself and porting the gate would add a check that can
-never fail. If a `modules/` or `examples/` tree is ever added here, port it
-then.
+There is **no `imports:check` here**, deliberately. community-agent needs it to
+enforce that its `src/base/` stays gone (a local copy forks the package
+silently) and that only its composition root imports `createAgent`. This repo
+IS the package: there is no module directory to import from, so the rule is
+enforced by the repository boundary itself and porting the gate would add a
+check that can never fail. If a `modules/` or `examples/` tree is ever added
+here, port it then.
 
 ## Scope notes
 
