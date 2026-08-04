@@ -177,6 +177,14 @@ here, port it then.
   and `0.1.1` shipped through the workflow. Every release from here is
   bump → PR → merge → tag, with no credential anywhere. Procedure:
   `docs/RELEASING.md`.
+  If you are an agent and `git push origin v<x.y.z>` fails, **do not debug it**:
+  a sandboxed session's git credential is commonly scoped to `refs/heads/*`, so
+  a tag push returns HTTP 403 that git reports as
+  `send-pack: unexpected disconnect`, while branch pushes keep working. Say so
+  and hand over — the tag can be created from the GitHub Releases UI, which
+  fires the identical event. Never work around it by relaxing the workflow's
+  "a real publish must run from a version tag" guard; that guard is what keeps
+  an unadjudicated commit off an immutable registry.
 
 ## Conventions
 
