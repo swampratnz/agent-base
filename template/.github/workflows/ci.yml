@@ -58,27 +58,35 @@ jobs:
       # the config slice it uses, and a workflow enumerating an app's whole env
       # is the smell that says it does not.
     steps:
+      # Actions are pinned by SHA, not by tag: a tag is mutable, so a moved
+      # `v5` silently changes what runs in a job that can read your repo.
+      #
       # No step needs a git credential after checkout, and `npm test` runs PR
       # code — so the job token must not sit readable in .git/config.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # Apply the schema before the tests. DB-backed tests SKIP cleanly when
+      # DATABASE_URL is unset, but against a reachable database with no schema
+      # they fail on missing relations — so this step is what makes "the DB
+      # tests actually ran" true rather than merely unverified.
+      - run: npm run migrate
       - run: npm test
       - run: npm run build
 
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
@@ -96,12 +104,12 @@ jobs:
       SECURITY_FLOOR_BASELINE_REF: ${{ github.event.pull_request.base.sha }}
       ALLOW_SECURITY_FLOOR_LOWER: ${{ contains(github.event.pull_request.labels.*.name, 'allow-security-floor-lower') }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           # Full history so the lowering guard can read the base manifest.
           fetch-depth: 0
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm

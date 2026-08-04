@@ -5,12 +5,23 @@ Copy this directory into an empty repository to start an agent built on
 
 **This is a starting point, not a working app.** It ships the conventions, the
 gate wiring and the empty ratchet-state files that are tedious and
-error-prone to recreate — and nothing else. In particular `src/main.ts` calls
-`createAgent`, **which does not exist yet**: the base runtime lands by
-extraction (see the base repo's `docs/ROADMAP.md`), and until it does, a repo
-scaffolded from here will typecheck its own module manifest and fail to
-resolve the runtime import. That is honest and deliberate; a template that
-pretended otherwise would be a template you have to un-learn.
+error-prone to recreate — and nothing else.
+
+A repo scaffolded from here **passes its own gate** on day one: it typechecks,
+lints, migrates, tests and builds. What it does not do is serve a turn.
+`createAgent` requires nine registrations before it will hand back an agent,
+and this manifest supplies one (`promptSections`), so `npm run dev` — once
+`.env` is filled in — names the other eight and stops:
+
+```
+Error: createAgent: 8 problem(s) with this composition — the agent cannot serve a turn:
+  - commands (no module supplied `commands`)
+  - default bad words (no module supplied `defaultBadWords`)
+  …
+```
+
+That is the intended first experience. The list is the to-do list for standing
+the agent up, and it is better delivered by the runtime than by a README.
 
 ## Using it
 
@@ -22,7 +33,9 @@ git init && npm install
 ```
 
 1. **Rename.** `package.json` `name`/`description`; `AGENT_NAME` in
-   `src/module/index.ts`; every `my-agent` in this file and in `CLAUDE.md`.
+   `src/module/index.ts`; the database name in `.env.example` and
+   `.github/workflows/ci.yml`; every `my-agent` in this file and in
+   `CLAUDE.md`.
 2. **Write `docs/VISION.md`.** What this agent is for and what is out of
    scope. Short. It is the thing you point every future "should we build X?"
    at.
@@ -35,14 +48,23 @@ git init && npm install
 5. **Set up CI.** `.github/workflows/ci.yml` runs the gate set standalone
    today; when the base publishes reusable workflows, swap to the call shown in
    its comments.
+6. **Fill in the required registrations**, in `src/module/index.ts`, until
+   `npm run dev` stops complaining. Each one is a section in the base repo's
+   `docs/MODULE-API.md`; the notice pack is the biggest, because it must cover
+   every id in `BASE_NOTICE_IDS`.
 
 ## The gates you have inherited
 
 ```
 npm run typecheck && npm run lint && npm run format:check \
-  && npm test && npm run build \
+  && npm run migrate && npm test && npm run build \
   && npm run context:check && npm run test:security
 ```
+
+`npm run migrate` applies the base schema fragments and then whatever
+`AgentModule.migrations` declares, in one query. It needs `DATABASE_URL` and
+nothing else, so it runs before the app has a full env — CI stands up
+pgvector and runs it before the tests, and so should you.
 
 Three of these are ratchets, and they are the reason this template exists at
 all — they are much easier to start with than to retrofit:
@@ -65,3 +87,10 @@ flow, outbound filtering, SQL scoping, the router spine, the prompt's security
 clauses, the migration runner, the purge transaction — is not overridable, by
 design. See the base repo's `docs/MODULE-API.md` for what you can register and
 `docs/SECURITY.md` for what you cannot reach around.
+
+Two limits worth knowing before you plan around them: there is **no
+`configSchema` on the manifest**, so a new env var is a change to the base and
+a version bump rather than something you add here; and **`runtimeSecrets` is
+base-owned and hand-written**, so an outward credential of your own is not
+covered by the outbound redaction backstop yet. Redact it at your own send
+site, and say so in your `docs/SECURITY.md`.

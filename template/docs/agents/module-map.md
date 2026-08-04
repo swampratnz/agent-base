@@ -15,6 +15,7 @@ bug — with 🔒.
 <!-- module-map:begin -->
 
 - `src/main.ts` — Composition root: names this agent's modules and hands them to the base. Nothing else belongs here; wiring a runtime concern locally means a seam is missing.
+- `src/migrate.ts` — `npm run migrate`: applies the base schema fragments and then this module's, in one query. Imports the runner by its own path, not the barrel, so it runs on DATABASE_URL alone.
 - `src/module/` — This agent's module manifest and everything it registers: tools, tables, jobs, prompt sections, policy keys, string packs.
 
 <!-- module-map:end -->
