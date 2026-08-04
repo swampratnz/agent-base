@@ -15,8 +15,9 @@ Read `README.md`, then:
 
 - `docs/ROADMAP.md` — what lands when, and the Phase 0 decisions of record.
 - `docs/MODULE-API.md` — what a module actually implements, written against
-  community-agent's **real code**, with a contract-vs-code table at the end.
-  This is the most useful document in the repo; read it before believing a type.
+  **this repo's real code**, with a contract-vs-code table at the end recording
+  where the v0 types still differ. The most useful document in the repo; read
+  it before believing a type.
 - `docs/SECURITY.md` — the runtime invariants and the pipeline threat model.
 - `docs/RELEASING.md` — how a release is cut, and why this package publishes
   to **public npmjs.com** rather than GitHub Packages.
@@ -43,10 +44,14 @@ the mechanism and the module registers data into it.
 - **Prefer moving runtime code over writing it.** Anything that already
   exists in community-agent arrives by extraction, with its tests, its
   security floor and the pipeline that adjudicated it. Writing an equivalent
-  fresh here forfeits all three.
-- **community-agent is authoritative on seam shapes** while its refactor is
-  underway: if a seam lands there differing from these types, fix the types to
-  match, and update `docs/MODULE-API.md`'s contract-vs-code table.
+  fresh here forfeits all three. Bring the tests in the same diff as the code:
+  issue #9 is what it costs when they are left behind.
+- **This repo is authoritative for base behaviour** now that the extraction has
+  landed and community-agent consumes the package. A base change is made here
+  and reaches the consumer as a version bump — never patched downstream. Where
+  `src/module-api/`'s v0 types and `createAgent`'s live `AgentModule` disagree,
+  the live one runs (issue #10); reconcile toward it and update
+  `docs/MODULE-API.md`'s contract-vs-code table.
 - **Never describe an unimplemented extension point as real.** Mark it
   `planned` and say where the behaviour lives today. A document that invents an
   API is worse than a missing one, because someone will build against it.
@@ -96,10 +101,18 @@ All green before opening or updating a PR.
   that auto-satisfied this gate would let modules enter the tree undescribed,
   which is the exact rot it exists to prevent.
 
-Both gate scripts take path flags (`--root`, `--src`, `--tests-dir`,
-`--manifest`) so one copy serves this repo, a future workspace layout, and
-every agent scaffolded from `template/`. Their own tests drive every failure
-mode against fixture trees; extend those when you change a gate.
+Both gate scripts take path flags so one copy serves this repo, a future
+workspace layout, and every agent scaffolded from `template/`. The flag sets
+are **not** the same, and passing the other script's flags is silently
+ignored, not an error:
+
+- `check-security-test-count.mjs` — `--root`, `--tests-dir` (repeatable),
+  `--manifest`, `--write`, `--allow-lower`.
+- `check-context-pack.mjs` — `--root`, `--src` (repeatable), `--map`,
+  `--write`.
+
+Their own tests drive every failure mode against fixture trees; extend those
+when you change a gate.
 
 `scripts/check-dist-schema.mjs` runs at the end of `npm run build`: `tsc`
 compiles `storage/schema/manifest.ts` but never copies the `.sql` fragments, so
@@ -120,17 +133,21 @@ then.
 - `.github/workflows/` is excluded from Prettier — automation here pushes with
   a token lacking the workflow scope, so it could never fix a failure there.
 - `template/` is outside lint, Prettier and both tsconfigs: it is copied *out*
-  of this repo, and its `main.ts` imports a runtime that does not exist yet.
-  The gates will not catch a mistake in it; keep it honest by hand.
+  of this repo, so formatting it here would impose this repo's choices on
+  someone else's future repo. The gates therefore will not catch a mistake in
+  it; keep it honest by hand, and verify a change by scaffolding a copy into a
+  temp dir, `npm install`ing, and running its own gate there. Its imports
+  resolve — `@swampratnz/agent-base` is a published dependency in its
+  `package.json`.
 - The canary workflow (`canary-community-agent.yml`) builds this commit,
   `npm pack`s it, installs the tarball into a community-agent checkout (no
   publish, no version bump) and runs that repo's typecheck/migrate/test/build.
-  It cannot pass until community-agent actually depends on the package, so it
-  is gated behind the `AGENT_BASE_CANARY_ENABLED` repository variable and skips
-  by default; `workflow_dispatch` with `force: true` runs it on demand. Its
-  header lists exactly what the consumer-side follow-up must do. Turn the
-  variable on in the same change that makes the consumer depend on the
-  package.
+  It is **on**: the `AGENT_BASE_CANARY_ENABLED` repository variable is set, the
+  consumer declares the dependency and has deleted its `src/base/`, and the job
+  runs daily on a `37 14 * * *` cron (plus `workflow_dispatch`, whose
+  `force: true` bypasses the variable). So a red canary is a real signal about
+  THIS commit, not expected noise — treat it as the consumer telling you a base
+  change broke it before a publish does.
 - The publish workflow (`publish.yml`) fires on a `v*.*.*` tag and runs the
   **same gate set as CI** before `npm publish`, because a tag can point at any
   commit — including one no PR ever adjudicated — and an npm version is
@@ -147,10 +164,12 @@ then.
   and it needs this repository to stay **public**.
   Trusted publishing also has hard floors (npm >= 11.5.1, Node >= 22.14.0) which
   the workflow upgrades toward and then asserts. `workflow_dispatch` defaults to
-  a dry run that exercises everything and authenticates not at all. The FIRST
-  release cannot use any of this — npm will not configure a publisher for a
-  package that does not exist — so `0.1.0` is a one-time manual publish.
-  Procedure, bootstrap and the owner-only prerequisites: `docs/RELEASING.md`.
+  a dry run that exercises everything and authenticates not at all. The
+  bootstrap is **done**: `0.1.0` was the one-time manual publish npm's
+  chicken-and-egg required, the trusted publisher was configured against it,
+  and `0.1.1` shipped through the workflow. Every release from here is
+  bump → PR → merge → tag, with no credential anywhere. Procedure:
+  `docs/RELEASING.md`.
 
 ## Conventions
 

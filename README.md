@@ -1,31 +1,33 @@
 # agent-base
 
-Community-agnostic base framework for Claude Agent SDK bots, being extracted
-from [`swampratnz/community-agent`](https://github.com/swampratnz/community-agent)
+Community-agnostic base framework for Claude Agent SDK bots, extracted from
+[`swampratnz/community-agent`](https://github.com/swampratnz/community-agent)
 (the NZ Claude Community agent). The base owns the generic agent
 infrastructure — platform adapters, three-tier RBAC, Postgres + pgvector
 memory, CONFIRM-gated destructive actions, outbound secret redaction,
 background jobs, budgets and alerting — and specific agents (a community
 agent, a personal finance agent, …) plug in as **modules**.
 
-## Status: contract, gates and docs — runtime pending
+## Status: published, with one consumer
 
-What exists today:
+`@swampratnz/agent-base` is on public npm (`0.1.0` and `0.1.1`), and
+`community-agent` consumes it — it has no `src/base/` of its own any more.
 
 | | |
 |---|---|
-| `src/module-api/` | the **module API contract**: the typed manifest a module registers |
+| `src/` | the **runtime**: agent kernel and prompt spine, platform adapters, storage + 26 SQL fragments, the router spine, jobs, auth, config, notices |
+| `src/createAgent.ts` | the **composition entry point**: `createAgent({ modules })`, and the registration order it owns |
+| `src/module-api/` | the published **v0 contract** for the extension points whose runtime is not reified as registration yet |
+| `tests/` | the suite that came across with the code, including the `SECURITY:` cases the floor gate counts |
 | `scripts/` | the **gates** — the security-test floor and the context-pack freshness check, generalised to multi-root layouts |
-| `.github/workflows/` | CI running the full gate set, plus a **canary** that builds community-agent against this commit |
-| `docs/MODULE-API.md` | what a module implements, written against community-agent's **real code** |
+| `.github/workflows/` | CI running the full gate set, the tag-triggered publish, and a **canary** that builds community-agent against this commit |
+| `docs/MODULE-API.md` | what a module implements, written against **real code** |
 | `template/` | a starting point for a new agent repo |
 
-The **runtime is not here yet, by design.** Per the extraction plan
-([docs/ROADMAP.md](docs/ROADMAP.md)), the runtime is being disentangled inside
-`community-agent` first — where ~200 test files, a security-test floor and a CI
-pipeline adjudicate every step — and lands here by extraction, not by
-greenfield rewrite. While that refactor is underway, `community-agent` is
-authoritative wherever the two disagree, and this contract gets fixed to match.
+The runtime arrived by extraction rather than by greenfield rewrite (see
+[docs/ROADMAP.md](docs/ROADMAP.md)), so it landed with its tests and its
+security floor. This repository is now authoritative for base behaviour;
+`community-agent` is authoritative only for what a *deployment* supplies.
 
 ## How a module plugs in
 
@@ -33,47 +35,58 @@ A module is a manifest of **registrations**. It never wires anything itself;
 the base owns ordering and every enforcement point.
 
 ```ts
-import type { AgentModule } from '@swampratnz/agent-base';
+import { z } from 'zod';
+import { createAgent, type AgentModuleManifest } from '@swampratnz/agent-base';
 
-export const financeModule: AgentModule = {
+/** The per-turn context this module's own tool handlers receive. */
+interface LedgerContext {
+  userId: string;
+}
+
+export const financeModule: AgentModuleManifest<LedgerContext> = {
   name: 'finance',
 
-  // Env slice, parsed by the base loader and handed back typed at init.
-  configSchema: z.object({ FINANCE_LEDGER_URL: z.string().url() }),
+  // The tool inventory plus the MCP server name it hangs under: the model
+  // sees each tool as `mcp__finance__<name>`. `makeContext` builds the
+  // per-turn context above; the base never looks inside it.
+  toolServerParts: {
+    name: 'finance',
+    makeContext: (caller) => ({ userId: caller.userId }),
+    registry: [
+      {
+        name: 'record_expense',
+        description: 'Record an expense against the household ledger.',
+        readOnlyHint: false,
+        schema: { amount: z.number().positive(), note: z.string().max(200) },
+        handler: async (args: { amount: number; note: string }, ctx) => ({
+          content: [{ type: 'text', text: `Recorded ${args.amount} for ${ctx.userId}: ${args.note}` }],
+        }),
+      },
+    ],
+  },
 
-  // Tools: ONE declaration is the source for the tier surface, platform
-  // filtering, feature flags, confirm gating and the capability rundown.
-  tools: [
-    {
-      name: 'record_expense',
-      description: 'Record an expense against the household ledger.',
-      minTier: 'member',
-      capabilityLine: 'record_expense — log a spend (member+)',
-      schema: z.object({ amount: z.number().positive(), note: z.string().max(200) }),
-      handler: async (args, ctx) =>
-        ctx.audited('record_expense', args, async () => ledger.add(args)),
-    },
-  ],
+  // The per-tier tool surface, computed before the model sees anything.
+  toolTiers: { member: ['record_expense'], admin: [], superAdmin: [], discordOnly: [] },
 
-  // Own tables, as idempotent SQL fragments run base-first in one transaction.
-  migrations: [{ name: 'finance-core', sql: '…' }],
+  // Own tables, as idempotent SQL fragments applied after every base fragment
+  // in the same one-shot migration.
+  migrations: [{ name: 'finance-core', sql: 'CREATE TABLE IF NOT EXISTS finance_expenses (…)' }],
 
-  // Own scheduled work; the base owns the scheduler, failure tracking and shutdown.
-  jobs: [reconcileJob],
-
-  // Own voice and prose, rendered BELOW the immutable security spine.
-  promptSections: { charter: 'You are a household finance assistant…' },
-
-  // Own share of privacy erasure — the base owns the transaction.
-  purge: financePurgeContributor,
+  // Own runtime policy keys, with the value a never-set key reads as.
+  policyKeys: { finance_month_start: 1 },
 };
+
+const agent = await createAgent({ modules: [financeModule] });
+await agent.start(); // pass a callback to bring adapters and jobs up
 ```
 
-Then:
-
-```ts
-await createAgent({ modules: [financeModule] });
-```
+That manifest is an excerpt. A composition must, across all its modules,
+supply the **nine required registrations** — notice pack, tool tiers,
+tool-server parts, flagged-tool predicates, skills manifest, prompt sections,
+commands, default bad words, and a default persona — or `createAgent` reports
+every gap at once and returns nothing. `promptSections` in particular is a
+closed, all-required slot set of nine fields;
+[`docs/MODULE-API.md`](docs/MODULE-API.md) lists them.
 
 Two things that will not change:
 
@@ -86,11 +99,12 @@ Two things that will not change:
   every accessor throws if nothing registered — never returning an empty list
   that would silently mean a narrower tool surface.
 
-`createAgent` does not exist yet, and the snippet above is the contract's
-intended shape rather than a working API.
-[`docs/MODULE-API.md`](docs/MODULE-API.md) documents what genuinely exists
-today, function by function, with every difference from these contract types
-listed explicitly. Read that before building anything.
+[`docs/MODULE-API.md`](docs/MODULE-API.md) documents every extension point
+function by function, and its contract-vs-code table lists where the v0 types
+in `src/module-api/` still differ from the live ones. Read that before
+believing a type: the barrel exports **two** `AgentModule` shapes, and
+`createAgent`'s — re-exported as `AgentModuleManifest` — is the one that runs
+(issue #10).
 
 ## Quickstart
 
@@ -101,9 +115,20 @@ npm install
 
 # the full gate — CI runs exactly this
 npm run typecheck && npm run lint && npm run format:check \
-  && npm test && npm run build \
+  && npm run migrate && npm test && npm run build \
   && npm run context:check && npm run test:security
 ```
+
+`npm run migrate` needs `DATABASE_URL` pointed at a Postgres 16 + pgvector
+database (and nothing else — the boot config slice validates db + log only).
+The DB-backed tests skip cleanly without it, so a contributor with no local
+Postgres is not blocked — but a skipped suite proves nothing.
+
+Consuming it from an agent is `npm install @swampratnz/agent-base` — public
+npm, no token, no `.npmrc`. The barrel is a small convenience surface and
+every compiled module is addressable by its source path
+(`@swampratnz/agent-base/router.js`); see
+[docs/RELEASING.md § The consumer side](docs/RELEASING.md#the-consumer-side).
 
 Starting a new agent: copy [`template/`](template/) into a fresh repo and read
 its README. It ships the conventions, the empty ratchet-state files and the
@@ -132,10 +157,19 @@ The full write-up, including the development pipeline's own threat model, is in
 ## Layout
 
 ```
-src/module-api/   the AgentModule manifest and its component types (v0)
-tests/            contract tests and the gate scripts' own coverage
-scripts/          the gates (security floor, context pack)
-docs/             ROADMAP · MODULE-API · SECURITY · ARCHITECTURE · STANDARDS · RELEASING
-docs/agents/      the committed context pack (gated by context:check)
-template/         new-agent repo template
+src/createAgent.ts  the composition entry point and its frozen registration order
+src/agent/          turn engine, prompt spine, tool kernel, CONFIRM flow, outbound filter
+src/platforms/      the adapter contract and the Discord / WhatsApp adapters
+src/storage/        pool, embeddings, schema fragments + migrator, lifecycle registries
+src/router.ts       the hot path; src/routerIntercepts.ts holds the frozen pre-turn spine
+src/auth/           tiers and role resolution; src/strings/ the notice catalogue
+src/module-api/     the v0 contract types for the not-yet-reified extension points
+tests/              the lifted suite, including every SECURITY: case the floor counts
+scripts/            the gates (security floor, context pack, dist schema)
+docs/               ROADMAP · MODULE-API · SECURITY · ARCHITECTURE · STANDARDS · RELEASING
+docs/agents/        the committed context pack (gated by context:check)
+template/           new-agent repo template
 ```
+
+`docs/agents/module-map.md` is the file-by-file version of this, and it is
+gated — one line per subsystem, kept honest by `npm run context:check`.

@@ -1,11 +1,20 @@
 /**
- * @swampratnz/agent-base — module API contract (v0).
+ * @swampratnz/agent-base — the package's public barrel.
  *
- * The runtime (router spine, turn engine, adapters, storage, scheduler) lands
- * here via extraction from swampratnz/community-agent once its Phase 1
- * strangler refactor is complete; see docs/ROADMAP.md. Until then this
- * package publishes the base↔module CONTRACT so refactor PRs over there and
- * new agents can code against one set of types.
+ * The runtime is here: the router spine, the turn engine, the adapters,
+ * storage and the scheduler all live under `src/` and ship compiled in
+ * `dist/`. This file is a ~15-symbol convenience surface over it —
+ * `createAgent`, the notice catalogue, the migration runner, the schema
+ * manifest, and the module-API types. Anything else is imported by its own
+ * path (`@swampratnz/agent-base/router.js`); the exports map wildcards every
+ * compiled module, so the barrel is deliberately NOT the whole API.
+ *
+ * Two `AgentModule` types are exported and they are not the same shape. The
+ * one re-exported below as `AgentModuleManifest` is `createAgent`'s, and it is
+ * what actually runs. `./module-api/module.js`'s is the published v0 CONTRACT,
+ * kept for the extension points whose runtime is not reified as registration
+ * yet (adapters, jobs, ingest sources) — see docs/MODULE-API.md's
+ * contract-vs-code table, and issue #10.
  */
 
 export type {
