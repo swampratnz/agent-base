@@ -1,0 +1,200 @@
+name: Consumption
+
+# Does a CONSUMER work? Everything else in CI asks whether this repository is
+# internally consistent; this asks the only question that ships.
+#
+# The distinction is not academic. Every defect that has reached a published
+# artifact so far was invisible to a green `ci.yml` run, because each needed a
+# condition CI does not produce — see docs/PIPELINE.md. Two of them were
+# exactly this shape:
+#
+#   * 0.1.0 published only the `.` barrel, so nothing past it was importable.
+#     The first consumer had to patch the installed package.json to work at all.
+#   * 0.1.1's exports map declared {types, import} only, so any `require`
+#     resolution failed with ERR_PACKAGE_PATH_NOT_EXPORTED (issue #11).
+#
+# Neither is visible from inside this repository, at all, ever: our own tests
+# import `../src/…` by relative path and never traverse the exports map.
+#
+# THE TARBALL IS THE POINT. Install a packed artifact, never a workspace link
+# or a `file:` reference to the source tree. A link resolves through src/ and
+# silently answers "yes" to every question this job exists to ask — whether
+# `exports` admits the specifier, whether `files` shipped the file, whether the
+# .sql fragments travelled. A link would make this job pass forever and mean
+# nothing.
+#
+# It also gates `template/`, which nothing else does (issue #21). template/ is
+# deliberately outside lint, Prettier and both tsconfigs — it is copied OUT of
+# this repo, so formatting it here would impose this repo's choices on someone
+# else's future repo — and it is not in `files`, so the publish preflight never
+# sees it either. That left its dependency range pinned at ^0.1.1 across the
+# 0.2.0 release, silently scaffolding new repos onto the version with the
+# broken exports map. Six gates missed it. This one would not have.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: consumption-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Read-only, same reasoning as ci.yml: this runs on `pull_request`, so it
+# executes PR-controlled code (npm lifecycle scripts, the scaffold's build).
+permissions:
+  contents: read
+
+jobs:
+  consume:
+    name: scaffold, install the tarball, run its gate
+    runs-on: ubuntu-latest
+    services:
+      # The scaffold runs `migrate` and its DB-backed tests for real. Same
+      # image and health-check shape as ci.yml.
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: consumer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/consumer_test
+      # The scaffold's config parse wants these present; values are irrelevant
+      # because no adapter is constructed. Kept here rather than in a .env so
+      # it is obvious they are fixtures.
+      CLAUDE_CODE_OAUTH_TOKEN: smoke-not-a-real-token
+      DISCORD_BOT_TOKEN: smoke-not-a-real-token
+      DISCORD_GUILD_ID: '1'
+      WHATSAPP_PROVIDER: disabled
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # `npm pack` does NOT run prepublishOnly (that fires on publish only) and
+      # there is no prepack hook, so dist/ must be built explicitly or the
+      # tarball ships stale or empty.
+      - name: Build and pack the real artifact
+        run: |
+          npm run build
+          mkdir -p "$RUNNER_TEMP/pkg"
+          npm pack --pack-destination "$RUNNER_TEMP/pkg"
+          ls -l "$RUNNER_TEMP/pkg"
+
+      - name: Scaffold template/ into a fresh directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/app"
+          cp -R template/. "$RUNNER_TEMP/app/"
+
+      - name: Install the packed tarball (never a link)
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          tarball="$(ls "$RUNNER_TEMP"/pkg/*.tgz)"
+          npm install "$tarball" --no-audit --no-fund
+          installed="$(node -p "require('@swampratnz/agent-base/package.json').version")"
+          echo "installed @swampratnz/agent-base@$installed"
+          # The scaffold's own declared range must ADMIT the version this repo
+          # builds. A caret on a 0.x major pins the minor, so template/'s range
+          # needs bumping on every framework minor — that is issue #21, and
+          # this is what stops it recurring silently.
+          repo_version="$(node -p "require('$GITHUB_WORKSPACE/package.json').version")"
+          if [ "$installed" != "$repo_version" ]; then
+            echo "::error::template/ resolved $installed but this repo builds $repo_version — bump template/package.json's range"
+            exit 1
+          fi
+
+      # The scaffolded repo's OWN gate, exactly as its package.json defines it.
+      # Not a re-run of ours: the gate scripts here execute out of
+      # node_modules/@swampratnz/agent-base/scripts/ with `--root .`, which is
+      # the arrangement a real scaffolded repo uses and nothing else tests.
+      - name: The scaffold's own gate
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run format:check
+          npm test
+          npm run build
+          npm run test:security
+          npm run context:check
+
+      - name: Migrate, and prove the SQL fragments travelled in the tarball
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          npm run migrate
+          # check-dist-schema.mjs proves dist/ matches the manifest in OUR
+          # tree. Nothing proves the fragments reached a consumer — and a
+          # consumer that installs this and cannot migrate is broken in a way
+          # no unit test sees.
+          shipped="$(ls node_modules/@swampratnz/agent-base/dist/storage/schema/*.sql | wc -l)"
+          expected="$(ls "$GITHUB_WORKSPACE"/src/storage/schema/*.sql | wc -l)"
+          echo "fragments: $shipped shipped, $expected in source"
+          if [ "$shipped" != "$expected" ]; then
+            echo "::error::$expected .sql fragments in src/ but $shipped in the installed package"
+            exit 1
+          fi
+
+      # ---- Boot smoke (issue #23) -----------------------------------------
+      #
+      # Two halves, and the negative one is not a lesser test. Asserting the
+      # EXACT expected failure means any OTHER failure — an import-time throw
+      # like the one that killed community-agent's built entry point, a
+      # resolution error, a config parse — fails this step, because it would
+      # not produce this message.
+
+      - name: Boot smoke — the scaffold refuses an incomplete composition, naming every gap
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          set +e
+          out="$(node dist/main.js 2>&1)"
+          status=$?
+          set -e
+          echo "$out"
+
+          if [ "$status" -eq 0 ]; then
+            echo "::error::the scaffold booted, but template/ registers only promptSections — it must refuse"
+            exit 1
+          fi
+
+          # The plan pass reports every problem TOGETHER, before any side
+          # effect. That property is the whole reason it is a separate pass, so
+          # assert the count, not just that something was mentioned.
+          case "$out" in
+            *"8 problem(s) with this composition"*) ;;
+            *) echo "::error::expected all 8 missing registrations reported at once"; exit 1 ;;
+          esac
+
+          for gap in "notice pack" "tool tiers" "tool-server parts" \
+                     "flagged-tool predicates" "skills manifest" "commands" \
+                     "default bad words" "default persona"; do
+            case "$out" in
+              *"$gap"*) ;;
+              *) echo "::error::the refusal did not name: $gap"; exit 1 ;;
+            esac
+          done
+
+      - name: Boot smoke — a COMPLETE composition starts, from the installed package
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          cp "$GITHUB_WORKSPACE/.github/smoke/boot.mjs" ./boot.mjs
+          out="$(node boot.mjs 2>&1)"
+          echo "$out"
+          case "$out" in
+            *"SMOKE OK"*) ;;
+            *) echo "::error::a complete composition failed to reach started"; exit 1 ;;
+          esac

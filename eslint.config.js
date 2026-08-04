@@ -56,7 +56,11 @@ export default tseslint.config(
     },
   },
   {
-    files: ['scripts/**/*.mjs'],
+    // Plain Node ESM: the gate scripts, and the CI smoke fixtures under
+    // .github/smoke/ (which are deliberately NOT under scripts/, because
+    // `files` ships scripts/ and a fixture that tests the package must not be
+    // part of it).
+    files: ['scripts/**/*.mjs', '.github/smoke/**/*.mjs'],
     languageOptions: {
       globals: globals.node,
     },

@@ -5,11 +5,12 @@
 // Only the fields you actually use belong here. An empty array is noise; a
 // missing field is the honest way to say "not yet".
 //
-// `AgentModuleManifest` is `createAgent`'s own type. The barrel ALSO exports an
-// `AgentModule` — the v0 contract, describing seams whose runtime is not
-// reified as registration yet. They are not the same shape and only this one
-// runs; see the base repo's docs/MODULE-API.md, which marks every extension
-// point live / partial / planned.
+// `AgentModuleManifest` is `createAgent`'s own type, and since 0.2.0 it is an
+// ALIAS of the barrel's `AgentModule` — either name works, they are one type.
+// (Through 0.1.1 they were two different types: the barrel also exported a v0
+// contract sketch under the same name, which `createAgent` would not accept.
+// See the base repo's docs/MODULE-API.md, which marks every extension point
+// live / partial / planned and exports a type only for the live ones.)
 import type { AgentModuleManifest } from '@swampratnz/agent-base';
 
 /** Also the MCP tool namespace: tools are exposed as `mcp__<name>__<tool>`. */
