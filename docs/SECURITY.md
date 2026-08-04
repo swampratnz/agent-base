@@ -302,30 +302,36 @@ token handed over.
 
 ---
 
-## 4 · Known gaps in enforcement coverage
+## 4 · A gap the gate could not see (closed)
 
 The invariants above are enforced by code; the code is held in place by tests
 whose count `npm run test:security` pins per file. Two of the most load-bearing
-enforcement points have **no test file here and no floor entry**, so a change
-to either can go green in this repository alone:
+enforcement points arrived here with **no test file and no floor entry**, so a
+change to either could go green in this repository alone:
 
 | Module | What it decides | Coverage here |
 |---|---|---|
-| `src/auth/rbac.ts` | tier resolution and the derived per-turn tool surface — invariant 2 | none (49 `SECURITY:` cases stayed behind) |
-| `src/agent/outbound.ts` | secret redaction on the last hop before a wire — invariant 4 | none (7 cases stayed behind) |
+| `src/auth/rbac.ts` | tier resolution and the derived per-turn tool surface — invariant 2 | `tests/rbac.test.ts`, `tests/rbacFailClosed.test.ts` |
+| `src/agent/outbound.ts` | secret redaction on the last hop before a wire — invariant 4 | `tests/outbound.test.ts` |
 
 The code moved; the tests did not, because they import the consumer's tool
 registry and the extraction's selection rule read that as "community test". The
-cases still run over in `swampratnz/community-agent` against this package's
-code, and the nightly canary is what makes that fact load-bearing rather than
-incidental — but a second consumer has no such safety net. Tracked as issue #9;
-the fix is tests written against the package boundary (register a synthetic
-tool set, assert the derivation) rather than copies of the originals.
+49 + 7 original cases still run in `swampratnz/community-agent` against this
+package's code, and the nightly canary is what makes that fact load-bearing
+rather than incidental — but a second consumer has no such safety net, which is
+what issue #9 was about.
 
-**The gate cannot see this class of gap.** The security floor protects against
-deleting cases within a repo. It cannot see a module arriving with no test
-file, and it cannot see a file arriving with fewer cases than it left with —
-the receiving manifest records whatever shows up as correct. Cross-repo moves
+Closed by writing against the **package boundary** rather than copying: the
+tier tests register a synthetic tool set through the real `registerToolTiers`
+and assert the derivation, so what is pinned here is the mechanism a module
+composes with, not one deployment's tool names. Copying was never available —
+the originals assert things like "`whats_new` is admin-only", which is the
+consumer's claim to make.
+
+**The gate still cannot see this class of gap.** The security floor protects
+against deleting cases within a repo. It cannot see a module arriving with no
+test file, and it cannot see a file arriving with fewer cases than it left with
+— the receiving manifest records whatever shows up as correct. Cross-repo moves
 therefore need a name-level diff against the source commit, not a count
 comparison.
 

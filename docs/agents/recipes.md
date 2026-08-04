@@ -242,7 +242,10 @@ manifest records whatever shows up as correct. `gatedNotice.test.ts` crossed
 over having silently dropped 6 of its 7 cases and both manifests agreed with
 each other the whole time. The other shape of the same hole is a module
 arriving with no test file at all — `rbac.ts` and `outbound.ts` did, leaving 56
-`SECURITY:` cases behind (issue #9).
+`SECURITY:` cases behind (issue #9, since covered by
+`tests/rbac.test.ts`, `tests/rbacFailClosed.test.ts` and
+`tests/outbound.test.ts`, written against the package boundary rather than
+copied).
 
 ---
 
