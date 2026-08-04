@@ -283,25 +283,26 @@ jobs:
             exit 1
           fi
 
-  # ---- The npm 12 limitation (issue #24) --------------------------------
+  # ---- npm 12, and the Baileys peer (issues #24, #29) -------------------
   #
-  # This job asserts a KNOWN, CURRENTLY-TRUE LIMITATION rather than a property
-  # we want. It is green while the limitation holds and red when it changes,
-  # in EITHER direction, because either way the README is then wrong.
+  # This job used to assert a LIMITATION: npm 12 refuses git-protocol fetches
+  # (EALLOWGIT), @whiskeysockets/baileys declares libsignal over git, and while
+  # baileys sat in `dependencies` that meant NOBODY on npm 12 could install
+  # this framework — whether or not they wanted WhatsApp, because npm resolves
+  # the whole tree before anything runs.
   #
-  # The finding: npm 12 refuses all git-protocol fetches (EALLOWGIT), and
-  # `@whiskeysockets/baileys` — a direct dependency — declares
-  # `libsignal: git+https://github.com/whiskeysockets/libsignal-node.git`.
-  # So a consumer on npm 12 cannot install this package AT ALL. Not a
-  # dev-environment quirk: it is the published tarball's own dependency tree,
-  # and npm 12 is current `latest`.
+  # #29 fixed it by making baileys an OPTIONAL PEER. So this job now asserts
+  # the opposite, and both halves matter:
   #
-  # That is a product decision (drop Baileys? make it optional? vendor
-  # libsignal?), tracked separately. What belongs HERE is that nobody
-  # rediscovers it by accident, and that the day it changes we notice and
-  # update the docs rather than leaving a stale warning in the README.
-  npm12-limitation:
-    name: npm 12 still refuses the git dependency
+  #   1. a consumer on npm 12 CAN install the framework, and
+  #   2. a consumer who wants Baileys still gets a working adapter.
+  #
+  # (2) is the half that would rot silently. Making an optional peer install
+  # cleanly is easy; keeping the feature it gates actually functional is the
+  # part a future dependency change could break without anyone noticing, and
+  # Baileys is what the first consumer runs in production today.
+  npm12-and-baileys-peer:
+    name: npm 12 installs, and Baileys still works
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -314,33 +315,73 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      - name: A consumer on npm 12 cannot install this package
+      - name: Pack once, for both halves
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/pkg" "$RUNNER_TEMP/n12app"
-          npm pack --pack-destination "$RUNNER_TEMP/pkg"
-          tarball="$(ls "$RUNNER_TEMP"/pkg/*.tgz)"
-          cp -R template/. "$RUNNER_TEMP/n12app/"
+          mkdir -p .pack
+          npm pack --pack-destination .pack
+          echo "TARBALL=$PWD/$(ls .pack/*.tgz)" >> "$GITHUB_ENV"
 
+      - name: A consumer on npm 12 CAN install the framework
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/n12app"
+          cp -R template/. "$RUNNER_TEMP/n12app/"
           npm install -g npm@12
           npm --version
 
           cd "$RUNNER_TEMP/n12app"
           set +e
-          out="$(npm install "$tarball" --no-audit --no-fund 2>&1)"
+          out="$(npm install "$TARBALL" --no-audit --no-fund 2>&1)"
           status=$?
           set -e
           echo "$out"
 
-          if [ "$status" -ne 0 ] && printf '%s' "$out" | grep -q 'EALLOWGIT'; then
-            echo "Limitation holds: npm 12 refuses the git-protocol dependency, as README documents."
-            exit 0
-          fi
-
-          if [ "$status" -eq 0 ]; then
-            echo "::error::npm 12 CAN now install this package. Good news — remove the limitation from README's consumer section and delete this job."
+          if [ "$status" -ne 0 ]; then
+            if printf '%s' "$out" | grep -q 'EALLOWGIT'; then
+              echo "::error::EALLOWGIT is back — something reintroduced a git-protocol dependency into the install tree. See issue #29."
+            else
+              echo "::error::npm 12 could not install the framework."
+            fi
             exit 1
           fi
 
-          echo "::error::npm 12 failed for a DIFFERENT reason than EALLOWGIT. Read the log above; the documented limitation may be wrong."
-          exit 1
+          # Prove it is genuinely absent rather than quietly pulled in anyway.
+          if [ -d node_modules/@whiskeysockets/baileys ]; then
+            echo "::error::baileys was installed despite being an OPTIONAL peer — it is back in the hard dependency tree"
+            exit 1
+          fi
+          echo "npm 12 installed the framework, without baileys, as intended."
+
+      - name: A Baileys consumer still gets a working adapter
+        shell: bash
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: smoke-not-a-real-token
+          DISCORD_BOT_TOKEN: smoke-not-a-real-token
+          DISCORD_GUILD_ID: '1'
+          WHATSAPP_PROVIDER: baileys
+          DATABASE_URL: postgres://unused:unused@127.0.0.1:5432/unused
+        run: |
+          # npm 11, because Baileys itself still needs the git fetch — that
+          # constraint is real and now belongs to the FEATURE rather than the
+          # framework, which is the whole point of #29.
+          npm install -g 'npm@^11.5.1'
+          npm --version
+
+          mkdir -p "$RUNNER_TEMP/bailapp"
+          cp -R template/. "$RUNNER_TEMP/bailapp/"
+          cd "$RUNNER_TEMP/bailapp"
+          npm install "$TARBALL" '@whiskeysockets/baileys@6.7.24' --no-audit --no-fund
+
+          node --input-type=module -e "
+            const m = await import('@swampratnz/agent-base/platforms/whatsapp/baileysAdapter.js');
+            if (typeof m.BaileysAdapter !== 'function') {
+              console.error('BaileysAdapter is not constructible');
+              process.exit(1);
+            }
+            if (!(m.BAILEYS_TOOL_CAPABILITIES?.size > 0)) {
+              console.error('BAILEYS_TOOL_CAPABILITIES is empty');
+              process.exit(1);
+            }
+            console.log('Baileys adapter loads from the installed package, ' + m.BAILEYS_TOOL_CAPABILITIES.size + ' capabilities');
+          "

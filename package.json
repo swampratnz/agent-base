@@ -68,7 +68,6 @@
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",
     "@hapi/boom": "^10.0.1",
     "@huggingface/transformers": "^4.2.0",
-    "@whiskeysockets/baileys": "6.7.24",
     "discord.js": "^14.27.0",
     "dotenv": "^17.4.2",
     "pg": "^8.22.0",
@@ -84,6 +83,7 @@
     "@types/node": "^26.1.0",
     "@types/pg": "^8.20.3",
     "@types/qrcode-terminal": "^0.12.2",
+    "@whiskeysockets/baileys": "6.7.24",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.7.0",
@@ -98,5 +98,14 @@
     "brace-expansion": "^5.0.8",
     "protobufjs": "^7.6.5",
     "sharp": "^0.35.3"
-  }
+  },
+  "peerDependencies": {
+    "@whiskeysockets/baileys": "6.7.24"
+  },
+  "peerDependenciesMeta": {
+    "@whiskeysockets/baileys": {
+      "optional": true
+    }
+  },
+  "_comment_baileys_peer": "Baileys is an OPTIONAL PEER, not a dependency, and that is deliberate. @whiskeysockets/baileys declares libsignal over git+https, and npm 12 refuses every git-protocol fetch (EALLOWGIT) — so while it sat in dependencies, NOBODY on npm 12 could install this framework, whether or not they wanted WhatsApp, because npm resolves the whole tree before anything runs. As an optional peer the constraint follows the FEATURE instead of the framework: a Discord-only agent installs on any npm, and a Baileys deployment adds @whiskeysockets/baileys to its own dependencies and is unchanged. The runtime import is confined to src/platforms/whatsapp/baileysAdapter.ts — wire.ts uses \"import type\", which erases — so a consumer that never imports that module never needs the package, and one that imports it without installing baileys gets ERR_MODULE_NOT_FOUND, which is honest. It stays in devDependencies because THIS repo builds and tests the adapter. See issue #29."
 }
