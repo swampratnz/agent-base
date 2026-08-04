@@ -44,8 +44,8 @@ export function stepJobFailureTracker(
  * Open string, not a closed union (agent-base plan §3: `BackgroundJobName`
  * becomes an open string so a module can register jobs the base never heard
  * of — see `src/jobs/types.ts`). Every name in this repo remains a fixed
- * literal in the job's owning module, composed in `src/module/jobs/registry.ts` —
- * never derived from message content or any other runtime value, which is
+ * literal in the job's owning module, composed into that deployment's job
+ * registry — never derived from message content or any other runtime value, which is
  * what keeps `buildJobFailureAlert`'s DM template and the `/healthz` `jobs`
  * keys non-attacker-controlled. Deliberately distinct from `BackgroundJob`
  * (`src/storage/repository/adminStats.ts`), which stays a CLOSED union
@@ -62,7 +62,7 @@ export type BackgroundJobName = string;
  * super-admin DM (an internal error string can incidentally contain a file
  * path, a query fragment, or other operational detail nobody intended to
  * broadcast). `jobName` is always a fixed literal registered by the job's
- * owning module (see `src/module/jobs/registry.ts`), never derived from anything
+ * owning module, never derived from anything
  * dynamic.
  */
 export function buildJobFailureAlert(
