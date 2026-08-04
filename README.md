@@ -21,6 +21,7 @@ agent, a personal finance agent, …) plug in as **modules**.
 | `scripts/` | the **gates** — the security-test floor and the context-pack freshness check, generalised to multi-root layouts |
 | `.github/workflows/` | CI running the full gate set, the tag-triggered publish, and a **canary** that builds community-agent against this commit |
 | `docs/MODULE-API.md` | what a module implements, written against **real code** |
+| `docs/PIPELINE.md` | what automation this repo should grow, and why a release-confidence layer comes before agent loops |
 | `template/` | a starting point for a new agent repo |
 
 The runtime arrived by extraction rather than by greenfield rewrite (see
