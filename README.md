@@ -10,8 +10,14 @@ agent, a personal finance agent, …) plug in as **modules**.
 
 ## Status: published, with one consumer
 
-`@swampratnz/agent-base` is on public npm (`0.1.0` and `0.1.1`), and
-`community-agent` consumes it — it has no `src/base/` of its own any more.
+`@swampratnz/agent-base` is on public npm — `0.2.0` is `latest` — and
+`community-agent` consumes it: it has no `src/base/` of its own any more.
+
+`0.2.0` is a **breaking** release, which under `0.x` is a minor bump (see
+[docs/ROADMAP.md](docs/ROADMAP.md)'s contract-stability note): the barrel now
+re-exports live types only, so the v0 contract types it used to export
+alongside them are gone. A consumer that imports its types by their deep paths
+— as community-agent does — is unaffected.
 
 | | |
 |---|---|
