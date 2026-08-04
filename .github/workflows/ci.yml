@@ -7,16 +7,16 @@ name: CI
 #   lint                 lint → format:check → context:check
 #   security-invariants  test:security, with the PR-base lowering guard
 #
-# One deliberate difference: this workflow enumerates NO application env vars.
-# community-agent's jobs carry a dummy CLAUDE_CODE_OAUTH_TOKEN / DISCORD_* /
-# WHATSAPP_PROVIDER block purely to satisfy that repo's import-time config
-# singleton, and the extraction plan calls that block out as something the base
-# should retire rather than template into every downstream repo. The base owns
-# no app config, so there is nothing to enumerate here — and when the runtime
-# arrives, config validation must stay scoped to the slice a given command
-# actually needs (community-agent's `src/config/boot.ts` is the precedent: it
-# validates db+log only, which is what let `npm run migrate` stop demanding an
-# OAuth token).
+# One deliberate difference: this workflow enumerates NO application env vars,
+# only DATABASE_URL. community-agent's jobs carry a dummy
+# CLAUDE_CODE_OAUTH_TOKEN / DISCORD_* / WHATSAPP_PROVIDER block purely to
+# satisfy an import-time config parse, and the extraction plan calls that block
+# out as something to retire rather than template into every downstream repo.
+# Keeping it absent here is a standing check on a real property: config
+# validation must stay scoped to the slice a given command actually needs.
+# `src/config/boot.ts` is why `npm run migrate` below runs on DATABASE_URL
+# alone, and if this job ever needs a dummy token added to keep it green, that
+# is the regression — fix the scoping, not the workflow.
 
 on:
   push:

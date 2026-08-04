@@ -42,10 +42,12 @@ Three consequences worth internalising:
   OIDC support and fails with an authentication error that reads exactly like a
   misconfigured publisher on npmjs.com.
 
-> **The first release cannot use it.** npm will not let you configure a trusted
-> publisher for a package that does not exist yet, so `v0.1.0` has to be
-> published by hand, once. See
-> [First release (one-time bootstrap)](#first-release-one-time-bootstrap).
+> **The bootstrap is done.** npm will not configure a trusted publisher for a
+> package that does not exist, so `0.1.0` was published by hand on 2026-08-03,
+> the publisher was configured against it, and `0.1.1` went out through the
+> workflow the same day. Nothing below needs doing again — the historical note
+> is kept only so the ordering is not re-derived. See
+> [First release (historical)](#first-release-historical).
 
 The mechanism is [`.github/workflows/publish.yml`](../.github/workflows/publish.yml),
 whose header comment is the authority on what it actually does; this page is
@@ -53,11 +55,11 @@ the procedure around it.
 
 ---
 
-## Prerequisites (one-time, owner only)
+## Prerequisites (one-time, owner only — all done)
 
-None of these can be done by CI or by an agent. Do them in order — and note
-that (4) is blocked until the [bootstrap publish](#first-release-one-time-bootstrap)
-has happened, which is a property of npm, not an oversight here.
+None of these can be done by CI or by an agent, and all four are complete. They
+are recorded because each is a thing that can be *undone* by accident, and the
+symptom is a dead release rather than an obvious mistake.
 
 ### 1. Licence — done
 
@@ -76,10 +78,8 @@ the declared identifier, on the dry-run path as well as the real one.
 scope and already exists. Publishing a scoped package under it works once you
 are logged in as that user; the scope needs no separate setup.
 
-`@swampratnz/agent-base` itself is **not on the registry** — an unauthenticated
-`GET` of `https://registry.npmjs.org/@swampratnz%2Fagent-base` returns 404, so
-the name is free as of this writing and the bootstrap publish below is what
-claims it.
+`@swampratnz/agent-base` is **on the registry** — the bootstrap publish claimed
+the name on 2026-08-03.
 
 **Keep 2FA enabled** on that account. The old reason to weaken it was CI
 publishing — an interactive OTP prompt cannot be answered by a workflow, which
@@ -100,98 +100,48 @@ The only credential in the release path is the per-run OIDC token GitHub mints
 from the workflow's `id-token: write` permission, and it never leaves the
 runner.
 
-### 4. Configure the trusted publisher — _after_ the bootstrap publish
-
-npm cannot configure a trusted publisher for a package that does not exist yet,
-so this step is genuinely blocked until
-[the first release](#first-release-one-time-bootstrap) has happened. It is
-listed here so the ordering is not a surprise.
-
----
-
-## First release (one-time bootstrap)
-
-**Read this before tagging `v0.1.0`.** The very first publish does **not** go
-through the workflow.
-
-npm's trusted-publisher setting lives on a package's own settings page, and the
-npmjs.com UI only offers it for a package that already exists — there is no way
-to pre-authorise a publisher for a name that has never been published
-([npm/cli#8544](https://github.com/npm/cli/issues/8544), open at the time of
-writing). So the sequence is unavoidable: publish `0.1.0` by hand, then
-configure trusted publishing, then never touch a credential again.
-
-A real run of the workflow before that bootstrap will pass every gate and then
-fail at `npm publish`. That is expected, not a defect.
-
-### Step 1 — tag as usual
-
-Do the version bump, PR, merge and tag exactly as
-[Cutting a release](#cutting-a-release) describes. The tag push will start the
-workflow; let it run (it is a free full-gate check of the tagged tree) and
-expect the publish step to fail.
-
-### Step 2 — publish by hand, from a clean checkout of the tag
-
-**Not from your working tree.** `npm publish` packs whatever is on disk, so a
-stray edit, a leftover scratch file or a half-finished branch would be baked
-into an immutable release. Clone fresh and check out the tag:
-
-```bash
-cd "$(mktemp -d)"
-git clone --depth 1 --branch v0.1.0 https://github.com/swampratnz/agent-base.git
-cd agent-base
-
-# sanity: this must print exactly the tag you are releasing
-git describe --exact-match --tags HEAD
-node -p 'require("./package.json").version'
-
-npm ci
-npm run build            # prepublishOnly runs it too; running it here fails earlier
-npm pack --dry-run       # eyeball the file list: dist/, scripts/, LICENSE, 26 *.sql
-
-npm login                # interactive; answer the 2FA prompt
-npm publish --access public
-```
-
-`--access public` is not optional for a first publish: a scoped package
-defaults to **restricted**, and a restricted package is the auth-required
-install this whole registry decision exists to avoid.
-
-This publish will **not** carry a provenance attestation — provenance comes
-from CI, and this one is a laptop. Every subsequent release gets one
-automatically.
-
-Then log the laptop back out, so no long-lived credential lingers:
-
-```bash
-npm logout
-```
-
-### Step 3 — configure the trusted publisher
+### 4. The trusted publisher — configured
 
 On <https://www.npmjs.com/package/@swampratnz/agent-base> → **Settings** →
-**Trusted publisher** → GitHub Actions. The fields, exactly:
+**Trusted publisher** → GitHub Actions:
 
 | Field                     | Value                                                    |
 | ------------------------- | -------------------------------------------------------- |
 | Organization or user      | `swampratnz`                                              |
 | Repository                | `agent-base`                                              |
 | Workflow filename         | `publish.yml`                                             |
-| Environment name          | _leave blank_ (this workflow uses no GitHub environment)   |
-| Allowed actions           | select **`npm publish`**                                  |
+| Environment name          | _blank_ (this workflow uses no GitHub environment)         |
+| Allowed actions           | **`npm publish`**                                        |
 
 The workflow filename is the field people get wrong: it is the **filename
 only, with its extension** — `publish.yml`, **not**
 `.github/workflows/publish.yml`. A path there produces an authentication
-failure on the next release that looks nothing like a naming mistake.
+failure that looks nothing like a naming mistake. It is also why renaming the
+workflow file breaks every release until this setting is updated.
 
-### Step 4 — prove it works
+---
 
-Bump to `0.1.1` (or whatever the next real change warrants) and release it the
-normal way. If it publishes with no token anywhere and the npmjs page shows a
-**Provenance** panel, the bootstrap is complete and this section never applies
-again.
+## First release (historical)
+
+Kept short, and kept only so nobody re-derives the ordering or, worse, re-runs
+a manual publish. **This does not apply again.**
+
+npm's trusted-publisher setting lives on a package's own settings page and the
+UI only offers it for a package that already exists
+([npm/cli#8544](https://github.com/npm/cli/issues/8544)), so the sequence was
+forced: `0.1.0` was published by hand from a clean checkout of the tag on
+2026-08-03, the trusted publisher was configured against the now-existing
+package, and `0.1.1` went out through the workflow with no credential anywhere
+— which is what proved the path.
+
+Two consequences that survive:
+
+- **`0.1.0` carries no provenance attestation.** It came from a laptop, not
+  CI. Every release from `0.1.1` on has one.
+- The tag `v0.1.0`'s workflow runs **failed at `npm publish`**, by design, and
+  they are still in the Actions history. That is not a regression to chase.
+
+Everything from here is the normal procedure below.
 
 ---
 
@@ -200,8 +150,8 @@ again.
 ### Step 0 — dry run first
 
 The dry-run path runs **everything**: every gate, the tarball-contents check,
-and `npm publish --dry-run`. It does not authenticate at all, so it works today
-— before the bootstrap publish, and before any trusted publisher exists.
+and `npm publish --dry-run`. It does not authenticate at all, so it can be run
+against any branch, at any time, for free.
 
 **Actions → Publish to npm → Run workflow**, leave `dry_run` at its default
 (`true`). Read the job summary: it lists the tarball's top-level entries and
@@ -217,7 +167,7 @@ real release does that.
 change to the module API is a **minor** bump.
 
 ```bash
-npm version 0.1.0 --no-git-tag-version
+npm version 0.1.2 --no-git-tag-version
 ```
 
 `--no-git-tag-version` on purpose: the version bump goes through a PR like any
@@ -241,24 +191,23 @@ From the merged commit on `main`:
 
 ```bash
 git checkout main && git pull
-git tag -a v0.1.0 -m 'agent-base 0.1.0'
-git push origin v0.1.0
+git tag -a v0.1.2 -m 'agent-base 0.1.2'
+git push origin v0.1.2
 ```
 
 The tag **must** be `v` + the exact `package.json` version. The workflow
 compares them and refuses a mismatch — that is the classic release footgun
-(tag `v0.2.0` pushed while `package.json` still says `0.1.0`), and npm would
+(tag `v0.2.0` pushed while `package.json` still says `0.1.1`), and npm would
 otherwise cheerfully publish something the tag does not name.
 
 Pushing the tag is what triggers the publish. There is no other trigger for a
 real publish: a manual run with `dry_run: false` from a branch is rejected,
 because it would publish an untagged tree.
 
-### Subsequent releases: what the workflow does
+### What the workflow does
 
-Once the bootstrap is done, that is the whole procedure — bump, commit, tag,
-push. **No token is created, rotated, or entered anywhere**, and nothing else
-is manual.
+That is the whole procedure — bump, commit, tag, push. **No token is created,
+rotated, or entered anywhere**, and nothing else is manual.
 
 The workflow, in one job, in this order:
 
@@ -304,18 +253,18 @@ confirmed against the GitHub API when the workflow was written — plus
 
 Two honest caveats:
 
-- The **bootstrap publish has no provenance**, because it comes from a laptop
-  rather than CI. Only releases from `0.1.1` onward carry one.
-- The **dry-run path does not authenticate**, so it cannot exercise the OIDC
-  exchange or the attestation. Both are first exercised by the first real
-  workflow publish.
+- **`0.1.0` has no provenance**, because that one publish came from a laptop
+  rather than CI. Every release from `0.1.1` onward carries one.
+- The **dry-run path does not authenticate**, so it exercises neither the OIDC
+  exchange nor the attestation. Both were first exercised by the `0.1.1`
+  publish, which is the run to compare against if a later one misbehaves.
 
 ### When a release fails to authenticate
 
 Symptoms are an npm authentication error at the publish step. In order of
 likelihood:
 
-- **The trusted publisher is not configured yet** — see the bootstrap section.
+- **The trusted publisher setting was changed or removed** — check it against the table in Prerequisites 4. This is the likeliest cause, because it is the only part of the release path that lives outside this repository.
 - **Workflow filename mismatch** — the npmjs setting must read `publish.yml`,
   the filename alone with its extension, not a path.
 - **`id-token: write` was removed or narrowed**, at the job, the repo, or the
@@ -327,12 +276,14 @@ likelihood:
 ## Verifying a published release
 
 ```bash
+V=0.1.1   # the version you just released
+
 # 1. the registry has it, with the right files and no auth involved
-npm view @swampratnz/agent-base@0.1.0
+npm view "@swampratnz/agent-base@$V"
 
 # 2. a clean consumer install — no .npmrc, no token, no login
 mkdir /tmp/verify && cd /tmp/verify && npm init -y >/dev/null
-npm install @swampratnz/agent-base@0.1.0
+npm install "@swampratnz/agent-base@$V"
 
 # 3. the two things that make it usable at all
 node -e 'import("@swampratnz/agent-base").then(m => console.log(Object.keys(m)))'
@@ -441,6 +392,16 @@ the package undependable for anything past the barrel — see
 `tests/packageExports.test.ts`, which pins that every module under `src/` is
 addressable.
 
+**ESM only.** Every entry in the exports map declares `types` and `import` and
+nothing else, so any resolution asking for the `require` condition gets
+`ERR_PACKAGE_PATH_NOT_EXPORTED`. That is consistent with `"type": "module"`,
+and no runtime import site is affected — but it is where a consumer stubs a
+toe, because Node >= 22 can otherwise `require()` ESM. It first bit
+`createRequire(...).resolve('@swampratnz/agent-base/…')` inside a test that
+only wanted a file path; `import.meta.resolve` is the right answer there, and
+it is what the consumer switched to. Tracked as issue #11, whose fix is a
+`default` condition alongside `import`.
+
 ### The canary
 
 [`canary-community-agent.yml`](../.github/workflows/canary-community-agent.yml)
@@ -450,18 +411,20 @@ must stay: it is what closes the window in which HEAD here is silently
 incompatible with the only consumer, and it works on commits that were never
 published.
 
-It is gated behind a repository **variable**, and stays off until the consumer
-actually depends on the package:
+It is gated behind a repository **variable**, which is now **on**:
 
 - **Settings → Secrets and variables → Actions → Variables**
 - `AGENT_BASE_CANARY_ENABLED` = `true`
 
-Flip it in the same change that makes `community-agent` declare
-`"@swampratnz/agent-base"` as a dependency. Until then the job skips, and a
-manual run with `force: true` is how you try it out. The workflow's header
-lists exactly what the consumer-side follow-up PR has to do.
+So it runs on its daily `37 14 * * *` cron and a red run is real signal about
+this repo's HEAD, not the known-premature noise it would have been before the
+consumer took the dependency. A manual run with `force: true` bypasses the
+variable; turning the variable off is the off switch if the consumer is ever
+mid-migration.
 
-Once a version is published, testing the **published** artifact as well as HEAD
-becomes possible — a second job, or an input naming a version instead of the
-local tarball. That is an optional extra, not a replacement: the local-tarball
-path is the one that catches a break before it ships.
+Now that versions are published, testing the **published** artifact as well as
+HEAD is possible — a second job, or an input naming a version instead of the
+local tarball. It would catch a packaging fault the local pack cannot see,
+which is exactly the class `0.1.0`'s missing subpath exports fell into. Still
+an optional extra, never a replacement: the local-tarball path is the one that
+catches a break before it ships.
