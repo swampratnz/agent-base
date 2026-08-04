@@ -14,6 +14,10 @@ template**. The runtime arrived by extraction, not by being written fresh here
 
 Read `README.md`, then:
 
+- `docs/VISION.md` — what this repository is FOR, what it must never become,
+  and where proposals come from. Read it before arguing that something belongs
+  in base: the test is not "is it generic?" but "could a module get this wrong
+  in a way that matters?".
 - `docs/ROADMAP.md` — what lands when, and the Phase 0 decisions of record.
 - `docs/MODULE-API.md` — what a module actually implements, written against
   **this repo's real code**, marking every seam `live` / `partial` / `planned`,

@@ -159,13 +159,18 @@ and an `AUTOMERGE_MODE` variable.
 Three things genuinely differ here, and they are design work rather than
 find-and-replace:
 
-**The research loop has a different input.** community-agent's reads
-`docs/VISION.md` — community features. This repository has no equivalent and
-should not invent one. Its real proposal sources are the contract-vs-code table
-in [MODULE-API.md](MODULE-API.md), the seams still marked `planned`, and
-**consumer friction**: issues in community-agent that turn out to be base
-problems. #9, #10 and #11 were all found by hand while doing something else,
-which is exactly the work a research loop should be doing.
+**The research loop has a different input.** community-agent's reads its
+`docs/VISION.md` — a backlog of community features. A framework's equivalent is
+not that, and this repository should not grow one: inventing extension points
+nobody has asked for is how a base accumulates surface it cannot defend.
+
+[VISION.md](VISION.md) is the version that fits, and it deliberately ends with
+a ranked list of where proposals come from rather than a list of features:
+consumer friction first (an issue in a consuming repo that turns out to be a
+base problem — #9, #10, #11 and #29 all arrived that way), then the
+contract-vs-code gaps in [MODULE-API.md](MODULE-API.md), then release-confidence
+gaps, and speculative generality last. That ordering is the research loop's
+prompt, near enough.
 
 **Two-repo changes have no mechanism.** A base change that requires a consumer
 change cannot be validated by either repository's CI alone. The canary is the
