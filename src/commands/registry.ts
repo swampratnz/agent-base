@@ -151,16 +151,15 @@ export function registerCommands(commands: readonly RegisteredCommand[]): void {
  * registration: something read the list before `createAgent` filled it. See
  * `bindDiscordCommand` below.
  *
- * NOTE: the thrown message still names a consumer path
- * (`src/module/commands.ts`) and advises importing it, which is now the wrong
- * fix — the list arrives via `AgentModule.commands`. Correcting the string is
- * a behaviour change, so it is left for its own diff.
+ * The message names `AgentModule.commands` rather than a file to import: it
+ * used to advise importing a module in the CONSUMER's repository, which was
+ * composition by side-effect import — the thing `createAgent` replaced.
  */
 export function registeredCommands(): readonly RegisteredCommand[] {
   if (!registered) {
     throw new Error(
-      'registeredCommands: no command list registered — import the community commands module ' +
-        '(src/module/commands.ts) before using a command surface',
+      'registeredCommands: no command list registered — a module must supply `commands` on its ' +
+        'createAgent manifest before a command surface can be used',
     );
   }
   return registered;

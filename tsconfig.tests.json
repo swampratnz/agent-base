@@ -57,6 +57,7 @@
     "tests/embeddings.test.ts",
     "tests/embeddingsDimMismatch.test.ts",
     "tests/eventTime.test.ts",
+    "tests/failClosedMessages.test.ts",
     "tests/gatedNotice.test.ts",
     "tests/healthState.test.ts",
     "tests/knowledgeCandidateDedupDegradation.test.ts",

@@ -1,12 +1,11 @@
 import type { Config } from '../config.js';
 
 /**
- * The base feature-flag predicate registry (agent-base plan §3
- * `featureFlags` row): core.ts's per-turn subtractive tool filter reads the
- * flagged set from HERE, and the community tool registry
- * (src/module/agent/tools/index.ts) registers it at its own module scope — derived
- * from each `ToolDef.featureFlag` — so the base turn engine never imports
- * the community tool inventory to learn which tools are flagged. Reads FAIL
+ * The base feature-flag predicate registry: core.ts's per-turn subtractive
+ * tool filter reads the flagged set from HERE, and a module supplies it —
+ * derived from each of its own `ToolDef.featureFlag` values — through the
+ * manifest's `flaggedToolPredicates`, so the base turn engine never imports a
+ * deployment's tool inventory to learn which tools are flagged. Reads FAIL
  * CLOSED before registration, matching registerToolTiers.
  */
 
@@ -20,8 +19,8 @@ let registered: ReadonlyArray<FlaggedToolPredicate> | null = null;
 
 /**
  * Register the flagged-tool predicates, exactly once per process — called by
- * the tool registry (src/module/agent/tools/index.ts) at its own module scope. A
- * second registration throws rather than swapping the set after boot.
+ * `createAgent` from the manifest's `flaggedToolPredicates`. A second
+ * registration throws rather than swapping the set after boot.
  */
 export function registerFlaggedToolPredicates(predicates: ReadonlyArray<FlaggedToolPredicate>): void {
   if (registered) {
@@ -42,7 +41,7 @@ export function registerFlaggedToolPredicates(predicates: ReadonlyArray<FlaggedT
 export function flaggedToolPredicates(): ReadonlyArray<FlaggedToolPredicate> {
   if (!registered) {
     throw new Error(
-      'no feature-flag predicates registered — import the tool registry (src/module/agent/tools/index.js) before filtering a tool surface',
+      'no feature-flag predicates registered — a module must supply `flaggedToolPredicates` on its createAgent manifest before a tool surface can be filtered',
     );
   }
   return registered;

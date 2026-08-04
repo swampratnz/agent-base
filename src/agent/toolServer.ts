@@ -9,11 +9,11 @@ import type { ToolServerTurnState } from './turnState.js';
  * The base tool-hosting kernel (agent-base plan §2): `buildToolServer` owns
  * the MECHANISM — one in-process MCP server per turn, every registered def
  * attached, the per-turn context threaded into every handler — while the
- * community CONTENT (the tool inventory, the context factory, and the MCP
- * server name that roots every `mcp__<name>__*` id) is registered by the
- * module at its own import time (`registerToolServerParts`, called from
- * src/module/agent/tools/index.ts's module scope). Everything here FAILS CLOSED
- * before registration, matching the tool-tier registry in auth/rbac.ts.
+ * module CONTENT (the tool inventory, the context factory, and the MCP
+ * server name that roots every `mcp__<name>__*` id) arrives as the manifest's
+ * `toolServerParts`, which `createAgent` hands to `registerToolServerParts`.
+ * Everything here FAILS CLOSED before registration, matching the tool-tier
+ * registry in auth/rbac.ts.
  */
 
 /**
@@ -75,11 +75,10 @@ export interface ToolServerParts<Ctx> {
 let registered: ToolServerParts<any> | null = null;
 
 /**
- * Register the tool-server parts, exactly once per process — called by the
- * tool registry (src/module/agent/tools/index.ts) at its own module scope, so
- * importing the registry anywhere is what makes a tool server buildable. A
- * second registration throws rather than swapping the inventory after boot,
- * matching registerToolTiers/registerPromptSections.
+ * Register the tool-server parts, exactly once per process — called by
+ * `createAgent` from the manifest's `toolServerParts`. A second registration
+ * throws rather than swapping the inventory after boot, matching
+ * registerToolTiers/registerPromptSections.
  */
 export function registerToolServerParts<Ctx>(parts: ToolServerParts<Ctx>): void {
   if (registered) {
@@ -94,7 +93,7 @@ export function registerToolServerParts<Ctx>(parts: ToolServerParts<Ctx>): void 
 function registeredParts(): ToolServerParts<any> {
   if (!registered) {
     throw new Error(
-      'no tool-server parts registered — import the tool registry (src/module/agent/tools/index.js) before building a tool server',
+      'no tool-server parts registered — a module must supply `toolServerParts` on its createAgent manifest before a tool server can be built',
     );
   }
   return registered;

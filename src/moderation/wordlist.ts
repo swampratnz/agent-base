@@ -1,16 +1,16 @@
 // Stage 1 bad-language detection: a zero-cost, case-insensitive, whole-word
 // match against a curated term list. Runs on EVERY scanned message when
-// moderation is enabled. The default terms are registered by the community
-// list (src/module/moderation/badWords.ts); operators extend them via
-// MODERATION_BAD_WORDS (config.moderation.badWords), and community-specific
-// slurs are best added there rather than shipped verbatim in source.
+// moderation is enabled. The default terms are a module's, registered through
+// its manifest; operators extend them via MODERATION_BAD_WORDS
+// (config.moderation.badWords), and community-specific slurs are best added
+// there rather than shipped verbatim in source.
 
 /**
- * The default term list is community CONTENT, so it is REGISTERED here by
- * `src/module/moderation/badWords.ts` at that module's import time rather than
- * defined in this mechanism file (agent-base plan §3). Exactly once per
- * process; a second registration throws rather than swapping the floor after
- * boot, matching the tool-tier and prompt-section registries.
+ * The default term list is module CONTENT, so it is REGISTERED here — via the
+ * manifest's `defaultBadWords`, which `createAgent` passes on — rather than
+ * defined in this mechanism file. Exactly once per process; a second
+ * registration throws rather than swapping the floor after boot, matching the
+ * tool-tier and prompt-section registries.
  */
 let registeredDefaults: readonly string[] | null = null;
 
@@ -38,7 +38,7 @@ export function areDefaultBadWordsRegistered(): boolean {
 function defaultBadWords(): readonly string[] {
   if (!registeredDefaults) {
     throw new Error(
-      'no default bad words registered — import the community list (src/module/moderation/badWords.js) before building a wordlist detector',
+      'no default bad words registered — a module must supply `defaultBadWords` on its createAgent manifest before a wordlist detector can be built',
     );
   }
   return registeredDefaults;
