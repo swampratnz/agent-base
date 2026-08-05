@@ -1,5 +1,21 @@
 # agent-base
 
+[![npm](https://img.shields.io/npm/v/@swampratnz/agent-base?logo=npm&color=cb3837)](https://www.npmjs.com/package/@swampratnz/agent-base)
+[![provenance](https://img.shields.io/badge/provenance-SLSA%20v1-2ea44f?logo=github)](docs/RELEASING.md)
+[![CI](https://github.com/swampratnz/agent-base/actions/workflows/ci.yml/badge.svg)](https://github.com/swampratnz/agent-base/actions/workflows/ci.yml)
+[![node](https://img.shields.io/node/v/@swampratnz/agent-base)](https://nodejs.org)
+[![license](https://img.shields.io/npm/l/@swampratnz/agent-base)](LICENSE)
+
+<!-- The version, node and licence badges read npm's own metadata, so they
+     follow a release without anyone editing this file. The provenance one is
+     static because npm exposes attestations per VERSION and any URL naming one
+     goes stale at the next release; it points at RELEASING.md, which is where
+     the trusted-publishing mechanism is actually explained. GitHub's own
+     "Packages" sidebar will always read empty for this repo — that panel lists
+     GitHub Packages only, and this publishes to npmjs.com deliberately (see
+     docs/ROADMAP.md's Phase 0 decisions), so these badges are the only cue on
+     the GitHub side that the package exists. -->
+
 Community-agnostic base framework for Claude Agent SDK bots, extracted from
 [`swampratnz/community-agent`](https://github.com/swampratnz/community-agent)
 (the NZ Claude Community agent). The base owns the generic agent
@@ -10,8 +26,10 @@ agent, a personal finance agent, …) plug in as **modules**.
 
 ## Status: published, with one consumer
 
-`@swampratnz/agent-base` is on public npm — `0.3.0` is `latest` — and
-`community-agent` consumes it: it has no `src/base/` of its own any more.
+[`@swampratnz/agent-base`](https://www.npmjs.com/package/@swampratnz/agent-base)
+is on public npm — `0.3.0` is `latest`, published by trusted publishing with a
+provenance attestation — and `community-agent` consumes it: it has no
+`src/base/` of its own any more.
 
 Both `0.2.0` and `0.3.0` are **breaking** releases, which under `0.x` are minor
 bumps (see [docs/ROADMAP.md](docs/ROADMAP.md)'s contract-stability note):
@@ -27,9 +45,9 @@ bumps (see [docs/ROADMAP.md](docs/ROADMAP.md)'s contract-stability note):
 |---|---|
 | `src/` | the **runtime**: agent kernel and prompt spine, platform adapters, storage + 26 SQL fragments, the router spine, jobs, auth, config, notices |
 | `src/createAgent.ts` | the **composition entry point**: `createAgent({ modules })`, and the registration order it owns |
-| `tests/` | the suite that came across with the code, including the `SECURITY:` cases the floor gate counts |
+| `tests/` | the suite that came across with the code, including the 199 `SECURITY:` cases across 26 files that the floor gate counts |
 | `scripts/` | the **gates** — the security-test floor and the context-pack freshness check, generalised to multi-root layouts |
-| `.github/workflows/` | CI running the full gate set, the tag-triggered publish, and a **canary** that builds community-agent against this commit |
+| `.github/workflows/` | CI running the full gate set, the tag-triggered publish, a **canary** that builds community-agent against this commit, and a **consumption** suite that installs the real tarball the way a stranger would |
 | `docs/VISION.md` | what this is for, what it must never become, and how we would know it worked |
 | `docs/MODULE-API.md` | what a module implements, written against **real code** |
 | `docs/PIPELINE.md` | what automation this repo should grow, and why a release-confidence layer comes before agent loops |
@@ -134,6 +152,16 @@ database (and nothing else — the boot config slice validates db + log only).
 The DB-backed tests skip cleanly without it, so a contributor with no local
 Postgres is not blocked — but a skipped suite proves nothing.
 
+One gate has no local equivalent yet, and it is the one that has caught the most:
+the **consumption** suite ([`.github/workflows/consumption.yml`](.github/workflows/consumption.yml))
+packs the real tarball, scaffolds [`template/`](template/) against it and boots
+it — across two Node/npm pairs, on Windows and macOS, and under npm 12 both
+with and without Baileys. Every defect that has reached a published artifact so
+far was in build or release machinery and invisible to a green `npm test`, which
+is why it exists. It runs on CI only, so the block above is not the whole gate;
+extracting it to `npm run test:consumption` is
+[issue #35](https://github.com/swampratnz/agent-base/issues/35).
+
 Consuming it from an agent is `npm install @swampratnz/agent-base` — public
 npm, no token, no `.npmrc`. The barrel is a small convenience surface and
 every compiled module is addressable by its source path
@@ -201,7 +229,8 @@ src/auth/           tiers and role resolution; src/strings/ the notice catalogue
 src/index.ts        the public barrel — live types only, from the files that run them
 tests/              the lifted suite, including every SECURITY: case the floor counts
 scripts/            the gates (security floor, context pack, dist schema)
-docs/               ROADMAP · MODULE-API · SECURITY · ARCHITECTURE · STANDARDS · RELEASING
+docs/               VISION · ROADMAP · MODULE-API · PIPELINE · SECURITY · ARCHITECTURE
+                    STANDARDS · RELEASING · PHASE-4-PERSONAL-AGENT
 docs/agents/        the committed context pack (gated by context:check)
 template/           new-agent repo template
 ```

@@ -84,7 +84,7 @@ Then the consumer flip: community-agent deleted its `src/base/`, took the
 dependency, and composed through `createAgent`. The canary is on and green.
 
 Still to come: the pipeline as reusable workflows (this repo ships none today —
-only `ci.yml`, `publish.yml` and the canary), and Phase 4.
+only `ci.yml`, `publish.yml`, the canary and `consumption.yml`), and Phase 4.
 
 ### Phase 4 is planned, and it names two seams to close
 
