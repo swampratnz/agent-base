@@ -230,7 +230,7 @@ src/index.ts        the public barrel — live types only, from the files that r
 tests/              the lifted suite, including every SECURITY: case the floor counts
 scripts/            the gates (security floor, context pack, dist schema)
 docs/               VISION · ROADMAP · MODULE-API · PIPELINE · SECURITY · ARCHITECTURE
-                    STANDARDS · RELEASING · PHASE-4-PERSONAL-AGENT
+                    STANDARDS · RELEASING · PHASE-4-PERSONAL-AGENT · MULTI-AGENT
 docs/agents/        the committed context pack (gated by context:check)
 template/           new-agent repo template
 ```
