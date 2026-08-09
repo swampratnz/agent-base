@@ -38,7 +38,8 @@
  *    flagged-tool predicates, skills manifest, prompt sections, commands,
  *    default bad words.
  * 4. **additive registries** — personas, turn-state finalizers, policy keys,
- *    provenance, purge contributors, pre-turn intercepts, post-turn handlers.
+ *    provenance, purge contributors, pre-turn intercepts, post-turn handlers,
+ *    runtime secrets.
  *    Appended in module declaration order; base owns the ITERATION order
  *    (each of these registries sorts by its own `order`/spine rules), so
  *    declaration order never decides behaviour.
@@ -79,6 +80,8 @@ import type { PurgeContributor } from './storage/lifecycle.js';
 import { registerPurgeContributor } from './storage/lifecycle.js';
 import type { PreTurnIntercept, PostTurnHandler } from './routerIntercepts.js';
 import { registerPostTurnHandler, registerPreTurnIntercept } from './routerIntercepts.js';
+import type { RuntimeSecretGetter } from './agent/secrets.js';
+import { registerRuntimeSecret } from './agent/secrets.js';
 import type { ModuleMigrationFragment } from './storage/migrate.js';
 import { migrate } from './storage/migrate.js';
 import { logger } from './logger.js';
@@ -149,6 +152,13 @@ export interface AgentModule<Ctx = unknown> {
   purgeContributors?: readonly PurgeContributor[];
   preTurnIntercepts?: readonly PreTurnIntercept[];
   postTurnHandlers?: readonly PostTurnHandler[];
+  /**
+   * Getters for the module's own outward credentials (OAuth tokens, API keys),
+   * folded into the exact-value redaction backstop every adapter send path
+   * applies. Getters, not values: a rotated token is covered on the next send
+   * without re-registration.
+   */
+  runtimeSecrets?: readonly RuntimeSecretGetter[];
   /** Schema fragments, applied after every base fragment. */
   migrations?: readonly ModuleMigrationFragment[];
 }
@@ -386,6 +396,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<Agent> {
     for (const contributor of mod.purgeContributors ?? []) registerPurgeContributor(contributor);
     for (const intercept of mod.preTurnIntercepts ?? []) registerPreTurnIntercept(intercept);
     for (const handler of mod.postTurnHandlers ?? []) registerPostTurnHandler(handler);
+    for (const getter of mod.runtimeSecrets ?? []) registerRuntimeSecret(getter);
   }
 
   // 5. the probe gate — the manifests SAID they fill everything; this checks

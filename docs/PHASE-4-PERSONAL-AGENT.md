@@ -167,17 +167,17 @@ never write a transaction row or a mail body into `interactions` where it
 would be embedded and recalled semantically; and keep the Postgres instance
 off any shared box.
 
-**(c) Base's secret-redaction backstop does not cover your credentials.**
-`runtimeSecrets()` (`src/agent/secrets.ts`) is a hand-written function listing
-*base's* credentials, and there is no registration API — MODULE-API.md marks
-`secrets` **planned**. Every adapter send path calls it
-(`filterOutbound(text, policy, runtimeSecrets(), …)`), so a Google refresh
-token or an Akahu token appearing in a tool result or an error string is
-**not** redacted before it reaches WhatsApp. For an agent whose credentials
-unlock two mailboxes, that is the sharpest gap in the design. Until
-[§8.2](#82-registerruntimesecret) lands: wrap every integration client so no
-error path ever interpolates a credential, redact at the module's own tool-result
-boundary, and pin it with a `SECURITY:` test.
+**(c) Base's secret-redaction backstop covers your credentials only if you
+register them.** *(Updated: [§8.2](#82-registerruntimesecret) has landed since
+this was written.)* Every adapter send path calls
+`filterOutbound(text, policy, runtimeSecrets(), …)`, and
+`AgentModule.runtimeSecrets` now folds module-registered getters into that
+list — so register a getter for every Google/Akahu token the moment the
+credential table exists, and pin each with a `SECURITY:` test that it is
+redacted. A credential you hold and did not register is still invisible to the
+backstop; wrapping integration clients so no error path interpolates a
+credential remains good hygiene, but it is defence in depth now rather than
+the only line.
 
 ---
 
@@ -396,17 +396,15 @@ Phase 0/1 rather than guessed.
 
 ### 8.2 `registerRuntimeSecret`
 
-**The sharpest gap, and the smallest fix.** `runtimeSecrets()` is a
-hand-written list of base credentials with no registration API, so a module's
-outward credential is not covered by the exact-value redaction backstop that
-every adapter send path applies. For an agent holding OAuth refresh tokens for
-two mailboxes, close this before Phase 4 — ideally before Phase 2, since that
-is when the first refresh token exists.
-
-Shape: an additive registry mirroring `registerProvenance` — module registers a
-getter, `runtimeSecrets()` concatenates base's list with the registered ones.
-Getters rather than values, because a refreshed OAuth token changes at runtime.
-A `SECURITY:` test that a registered secret is redacted from an adapter send.
+**Landed.** This was the sharpest gap and the smallest fix, and it shipped in
+exactly the shape proposed here: an additive registry mirroring
+`registerProvenance` (`src/agent/secrets.ts`), registered through the
+manifest's `runtimeSecrets` field — getters rather than values, because a
+refreshed OAuth token changes at runtime; a throwing getter fails the send
+rather than letting it out unredacted; `SECURITY:` tests pin all of it. See
+MODULE-API.md § Runtime secrets. What remains for `personal-agent` is the
+module's half: register a getter per credential the moment the credential
+exists, and pin each with its own redaction test.
 
 ### 8.3 The gaps this build does *not* force
 

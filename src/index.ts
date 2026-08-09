@@ -103,6 +103,14 @@ export {
 export type { AdapterFactory } from './platforms/registry.js';
 export type { AdapterPolicyText, AdapterTextPack, PlatformAdapter } from './platforms/types.js';
 
+// --- Secrets -----------------------------------------------------------------
+//
+// The type the `AgentModule.runtimeSecrets` manifest field is written in terms
+// of. The registration function stays a deep import
+// (`@swampratnz/agent-base/agent/secrets.js`) — a module registers through the
+// manifest, same as provenance.
+export type { RuntimeSecretGetter } from './agent/secrets.js';
+
 // --- Alerts ------------------------------------------------------------------
 export type { AlertPriority } from './pendingAlertQueue.js';
 

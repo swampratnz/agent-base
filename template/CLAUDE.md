@@ -37,11 +37,10 @@ This bot may process untrusted public chat. Preserve these, all inherited:
   surface is tier-derived; privileged tools re-assert the tier.
 - Destructive actions are CONFIRM-gated and executed by the router, not the
   model.
-- Outbound filtering (secret redaction + policy) is on every send path. The
-  exact-value secret list it redacts is the BASE's `runtimeSecrets()`, which a
-  module cannot add to today — so an outward credential of your own must be
-  redacted at your own send site, and named as a residual risk in
-  `docs/SECURITY.md` until the per-credential registration seam lands.
+- Outbound filtering (secret redaction + policy) is on every send path.
+  Register every outward credential of your own as a getter on the manifest's
+  `runtimeSecrets` field, so the base's exact-value redaction backstop covers
+  it on every send — and add a `SECURITY:` test that it is redacted.
 - Admin data access is scoped in SQL to conversations the admin is in.
 
 Anything you add that touches one of these needs a `SECURITY:`-prefixed test.

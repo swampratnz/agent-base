@@ -88,9 +88,9 @@ clauses, the migration runner, the purge transaction — is not overridable, by
 design. See the base repo's `docs/MODULE-API.md` for what you can register and
 `docs/SECURITY.md` for what you cannot reach around.
 
-Two limits worth knowing before you plan around them: there is **no
+One limit worth knowing before you plan around it: there is **no
 `configSchema` on the manifest**, so a new env var is a change to the base and
-a version bump rather than something you add here; and **`runtimeSecrets` is
-base-owned and hand-written**, so an outward credential of your own is not
-covered by the outbound redaction backstop yet. Redact it at your own send
-site, and say so in your `docs/SECURITY.md`.
+a version bump rather than something you add here. (Parse your own env with zod
+in `init()` as the interim.) Outward credentials of your own DO have a seam:
+register each as a getter on the manifest's `runtimeSecrets` field and the
+base's outbound redaction backstop covers it on every send path.

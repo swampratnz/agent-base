@@ -101,11 +101,11 @@ lands on two `planned` seams almost immediately.
   *here* — in the framework that is supposed to be domain-agnostic. There is a
   workable interim (parse your own env in `init()`, which keeps the fail-fast
   property), so this is a Phase-2-of-that-build item, not a prerequisite.
-- **`registerRuntimeSecret`** is the sharper one and the smaller fix.
-  `runtimeSecrets()` lists base credentials only, so a module's outward
-  credential is not covered by the exact-value redaction every adapter send
-  path applies. A consumer holding OAuth refresh tokens for two mailboxes needs
-  this before its first token exists.
+- **`registerRuntimeSecret`** was the sharper one and the smaller fix, and it
+  has since **landed**: `AgentModule.runtimeSecrets` registers per-credential
+  getters into the exact-value redaction backstop every adapter send path
+  applies. A consumer holding OAuth refresh tokens for two mailboxes needed
+  this before its first token existed, and now has it.
 
 Both are already marked `planned` in [MODULE-API.md](MODULE-API.md); what Phase
 4 adds is a consumer that makes them concrete rather than theoretical.
