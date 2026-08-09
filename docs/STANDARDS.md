@@ -19,11 +19,18 @@ style rather than substance.
 ```
 npm run typecheck && npm run lint && npm run format:check \
   && npm run migrate && npm test && npm run build \
-  && npm run context:check && npm run test:security
+  && npm run context:check && npm run test:security \
+  && npm run test:consumption
 ```
 
-CI runs exactly this, in three jobs. Run it before opening or updating a PR —
-a red PR only makes rework.
+CI runs exactly this — `ci.yml` in three jobs, plus `consumption.yml`'s
+`consume` job running the same `npm run test:consumption` across a toolchain
+matrix. Run it before opening or updating a PR — a red PR only makes rework.
+
+`test:consumption` is the one that asks whether a CONSUMER works: it packs the
+real tarball, scaffolds `template/`, installs the tarball and runs the
+scaffold's own gate and boot smokes. It needs `DATABASE_URL` too and skips
+visibly without one — but a skip proves nothing, same as the DB-backed tests.
 
 **Run the whole line, not `npm test` alone.** `npm test` does not check
 `tests/security-floor.json`; `npm run test:security` is the only thing that
