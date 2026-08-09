@@ -52,13 +52,13 @@ Named generically, because the concrete list is per-agent:
 5. **The repository itself** — the pipeline can write code; see §3.
 
 A credential the base does not know about is a credential the DLP layer cannot
-redact — and today the base's list is **hand-written and base-only**
-(`src/agent/secrets.ts`'s `runtimeSecrets()`, reading the config singleton). A
-module cannot add to it. So: every new BASE credential must be added to that
-function by hand in the same diff that introduces it, and a module's own
-outward credential is not covered at all — it must be redacted at its own send
-site and recorded as a residual risk in that deployment's SECURITY.md. See
-invariant 4.
+redact. Base's own list is hand-written (`src/agent/secrets.ts`'s
+`runtimeSecrets()`, reading the config singleton) — every new BASE credential
+must be added to that function by hand in the same diff that introduces it. A
+module's outward credential is registered via the `AgentModule.runtimeSecrets`
+manifest field (per-credential getters, folded into the same list), so a module
+that declares its credentials there is covered by the backstop on every send
+path; one that does not is not covered at all. See invariant 4.
 
 ---
 
@@ -122,10 +122,12 @@ plus content policy. Module string packs and adapter text packs supply
 never route around it.
 
 The redacted value list is the backstop for egress paths nobody thought of,
-rather than for the one send site that already redacts. **Planned:** a
-`registerRuntimeSecret()` per credential, so a module can contribute its own.
-What exists is a hand-written `runtimeSecrets()` listing base credentials only,
-which must be updated by hand — see §1.
+rather than for the one send site that already redacts. Base credentials are
+hand-written in `runtimeSecrets()`; a module contributes its own through
+`AgentModule.runtimeSecrets` — per-credential *getters*, re-read on every send
+so a rotated token stays covered, with a throwing getter failing the send
+rather than letting it out unredacted. See §1 and MODULE-API.md
+§ Runtime secrets.
 
 ### 5. Scoped reads
 

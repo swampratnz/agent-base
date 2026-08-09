@@ -1,6 +1,6 @@
 {
   "backgroundJobHealth.test.ts": 1,
-  "createAgent.test.ts": 1,
+  "createAgent.test.ts": 2,
   "failClosedMessages.test.ts": 1,
   "gatedNotice.test.ts": 6,
   "healthState.test.ts": 1,
@@ -19,7 +19,7 @@
   "redeploy.test.ts": 2,
   "repository.test.ts": 117,
   "sanitizeName.test.ts": 3,
-  "secrets.test.ts": 5,
+  "secrets.test.ts": 8,
   "securityFloorGate.test.ts": 8,
   "storageLifecycle.test.ts": 1,
   "whatsappCloudWire.test.ts": 8,

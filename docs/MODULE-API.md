@@ -70,7 +70,8 @@ await agent.start(() => startAdaptersAndJobs());
    flagged-tool predicates, skills manifest, prompt sections, commands,
    default bad words.
 4. **additive registries** — personas, turn-state finalizers, policy keys,
-   provenance, purge contributors, pre-turn intercepts, post-turn handlers.
+   provenance, purge contributors, pre-turn intercepts, post-turn handlers,
+   runtime secrets.
 5. **the readiness gate** — `assertRegistrationsComplete()` probes the real
    fail-closed accessors: step 1 proved the manifests *say* they fill
    everything, this proves the registries took it.
@@ -98,7 +99,7 @@ surface — completeness is required of the composition, not of any one module.
 | `commands?` | command roster | **yes** |
 | `defaultBadWords?` | moderation term list | **yes** |
 | `personas?` | persona registry | **yes**, and exactly one entry must be `isDefault` |
-| `turnStateFinalizers?` · `policyKeys?` · `provenance?` · `purgeContributors?` · `preTurnIntercepts?` · `postTurnHandlers?` · `migrations?` | additive | no |
+| `turnStateFinalizers?` · `policyKeys?` · `provenance?` · `purgeContributors?` · `preTurnIntercepts?` · `postTurnHandlers?` · `runtimeSecrets?` · `migrations?` | additive | no |
 
 The eight singleton rows plus `personas` are the nine `assertRegistrationsComplete()`
 probes; a composition missing any of them is refused with every gap named at
@@ -425,6 +426,38 @@ The base owns the cached reader/writer and two keys (`code_answers`,
 Reading or writing an unregistered key **throws** rather than inventing a
 default, so a typo surfaces immediately instead of as a phantom policy that
 always reads null. A duplicate key throws too.
+
+### Runtime secrets
+
+**live.** `src/agent/secrets.ts`, registered through the manifest's
+`runtimeSecrets` field.
+
+```ts
+export type RuntimeSecretGetter = () => string | undefined;
+registerRuntimeSecret(getter: RuntimeSecretGetter): void;
+runtimeSecrets(): string[];   // base's list + every registered getter, read fresh
+```
+
+Folds a module's outward credentials (OAuth tokens, aggregator keys) into the
+exact-value redaction backstop that every adapter send path applies
+(`filterOutbound(text, policy, runtimeSecrets(), …)`). Additive, like
+provenance: base's own credential list stays hand-written in the same file, and
+registration extends it, never replaces it.
+
+Three properties are deliberate, and each has a `SECURITY:` test:
+
+- **Getters, not values.** Every getter is re-read on each send, so a rotated
+  OAuth token is covered the moment it exists — a value captured at
+  registration would redact yesterday's token and let today's through.
+- **Unset is safe.** A getter may return `undefined` while the credential does
+  not exist yet; `redactSecrets` ignores empty/short values, same as base's
+  unset optionals.
+- **A throwing getter fails the send** rather than letting it out unredacted.
+  Failing a message is recoverable; leaking a mailbox token is not.
+
+This closes the gap PHASE-4-PERSONAL-AGENT.md §8.2 named: a module holding an
+OAuth refresh token registers a getter for it and the backstop covers every
+egress path, not just the send sites the module remembered to redact itself.
 
 ---
 
@@ -807,7 +840,7 @@ implementation**. Documented here so nobody builds against them:
 | `moderationPolicy` — inbound-content hook + post-warn strike policy | the moderator is constructed inside the Discord adapter (`createModerator`); the term list IS registered (`defaultBadWords`), the policy around it is not |
 | `digestSignals` / `reviewQueues` / `submissionProviders` | the admin digest builder takes its signals as positional parameters; queue lists live in the module |
 | `ingestSources` / `refreshTopics` | index URLs, path strips and topic lists are module *code*, not env, and must stay that way — the researchable surface must not be runtime-controllable |
-| `secrets` — `registerRuntimeSecret()` per credential | `src/agent/secrets.ts`'s `runtimeSecrets()` is a hand-written function reading the config singleton, and it lists the BASE credentials only. There is no way for a module to add one, so a module's own outward credential is not covered by the redaction backstop today. Every new base credential must be added there by hand |
+| ~~`secrets` — `registerRuntimeSecret()` per credential~~ | **live** — `AgentModule.runtimeSecrets` registers per-credential getters into the exact-value redaction backstop (see [§ Runtime secrets](#runtime-secrets)). Base's own credentials remain hand-written in `src/agent/secrets.ts`, added there in the same diff that introduces each |
 | `auditActionKinds` / `trackedCostJobs` | fixed constants (`MODERATION_ACTION_KINDS` in `src/storage/repository/adminStats.ts`, the `BackgroundJob` union beside it) — both closed because a DB CHECK constrains them |
 | `featureFlags` (the operator rundown) | a fixed map in the module. Distinct from the *tool-level* flag predicates, which ARE registered |
 | `adapters` — a factory list on the manifest | static arrays: `PLATFORM_DESCRIPTORS` here, `ADAPTER_FACTORIES` in the module. This is also why `assertToolAvailabilityConsistent` has to be called by the composition root |
@@ -831,7 +864,7 @@ not.
 
 | The v0 contract said | The code says | Which won, and why |
 |---|---|---|
-| `AgentModule` with `configSchema`, `tools`, `jobs`, `adapters`, `strings`, `runtimeSecrets`, `purge`, and an `init(ctx)` taking parsed config | `AgentModule<Ctx>` with `toolServerParts`, `toolTiers`, `flaggedToolPredicates`, `notices`, `defaultBadWords`, `policyKeys`, `provenance`, `purgeContributors`, and a nullary `init()` | **The code.** The two were not assignable in either direction — the `init` signature alone made it a TS2322 — so a module author who picked the wrong one found out at the first `createAgent` call. The v0 field names describe seams that are still `planned`; they are listed above, not typed. |
+| `AgentModule` with `configSchema`, `tools`, `jobs`, `adapters`, `strings`, `runtimeSecrets`, `purge`, and an `init(ctx)` taking parsed config | `AgentModule<Ctx>` with `toolServerParts`, `toolTiers`, `flaggedToolPredicates`, `notices`, `defaultBadWords`, `policyKeys`, `provenance`, `purgeContributors`, and a nullary `init()` | **The code.** The two were not assignable in either direction — the `init` signature alone made it a TS2322 — so a module author who picked the wrong one found out at the first `createAgent` call. The v0 field names describe seams that were then still `planned`; most still are and are listed above, not typed. `runtimeSecrets` has since gone live under its v0 name — as getters rather than the values the sketch implied. |
 | `JobSpec { intervalMs, runOnce() }` | `JobSpec { enabled(cfg), start(adapters) }` | **The code**, deliberately. Today's cadences are heterogeneous and a single `intervalMs` would misdescribe most of them. The contract remains the aspiration for a scheduler that owns cadence. |
 | `ToolDef.capabilityLine`, `ToolDef.rateLimit` | neither field exists | **The code, for now.** Capability rundown text is static prose in a tools domain file; rate reservations are separate helpers the handlers call. Both are worth folding into the def eventually — that is what makes a def the single source. |
 | `ToolDef.schema: z.ZodTypeAny` | `schema: ZodRawShape` | **The code.** The SDK's `tool()` helper takes a raw shape; a full zod type would have to be unwrapped at every registration. |

@@ -257,7 +257,7 @@ claims and only one of them is cheap.
 |---|---|---|
 | 1 | **No labels.** `status:approved` does not exist, and the build worker triggers on `label` events for exactly that name. Nothing could ever start. There is no `setup-labels.yml`/`scripts/setup-labels.sh` here either. | blocker, trivial fix |
 | 2 | **No `CLAUDE_CODE_OAUTH_TOKEN`.** Every LLM loop checks `secrets.CLAUDE_CODE_OAUTH_TOKEN != ''` and no-ops when empty — so a port would appear installed and do nothing, which is worse than failing. | blocker, trivial fix |
-| 3 | **The build worker's gate no longer equals CI.** See below. | blocker, real work |
+| 3 | **The build worker's gate no longer equals CI.** See below. | ~~blocker, real work~~ **fixed** — issue #35, `npm run test:consumption` |
 | 4 | `imports:check` is named in the build worker's prompt and does not exist here (deliberately — see CLAUDE.md). A ported prompt would instruct an agent to run a missing script. | small |
 | 5 | `theme:*` values are community-specific and would seed a framework's research with a consumer's categories. | small |
 | 6 | Two-repo changes still have no mechanism. | design work |
@@ -273,26 +273,24 @@ community-agent's rule, in its `CLAUDE.md`:
 That worked because its whole gate is a list of `npm run …` commands, and its
 `ci.yml` runs exactly those.
 
-**That equivalence broke here today.** Layer 1 added `consumption.yml` — five
-jobs across two workflows — and promoted the canary to a PR gate. None of it is
-reachable by `npm run …`: the pack/scaffold/install sequence, the toolchain
-matrix, the Windows and macOS packs and the cross-repo canary are all
-workflow-level. A build worker would run the npm gates, correctly believe it
-was green, open a PR, and then discover Consumption or Canary red — which is
-precisely the "green locally, red in CI" loop the rule exists to prevent, and
-the loop most likely to burn a retry budget.
+**That equivalence broke here when Layer 1 landed, and issue #35 restored it.**
+Layer 1 added `consumption.yml` — five jobs across two workflows — and promoted
+the canary to a PR gate, none of it reachable by `npm run …`. A build worker
+would have run the npm gates, correctly believed it was green, opened a PR, and
+then discovered Consumption or Canary red — precisely the "green locally, red
+in CI" loop the rule exists to prevent, and the loop most likely to burn a
+retry budget.
 
-The fix is to make the sequence runnable, not to weaken the rule: extract the
-consumption test into `scripts/consumption-test.mjs`, expose it as
-`npm run test:consumption`, and have `consumption.yml` invoke that script rather
-than inline bash. Then the gate list is a list of npm scripts again, the build
-worker can run it, and a contributor gets the same check locally — which is the
-same principle that put every other gate behind an npm script. The
+The fix was to make the sequence runnable, not to weaken the rule: the
+consumption test now lives in `scripts/consumption-test.mjs`, exposed as
+`npm run test:consumption`, and `consumption.yml`'s `consume` job invokes that
+script rather than inline bash. The gate list is a list of npm scripts again,
+a build worker can run it, and a contributor gets the same check locally —
+the same principle that put every other gate behind an npm script. The
 cross-platform and toolchain matrices stay workflow-level by nature, and the
-honest answer there is that a build worker cannot reproduce them, so they should
-be understood as post-merge signals rather than pre-PR ones.
-
-Tracked as an issue rather than folded in here.
+honest answer there is that a build worker cannot reproduce them, so they
+should be understood as post-merge signals rather than pre-PR ones — the same
+goes for the canary.
 
 ---
 

@@ -14,6 +14,7 @@ const { PRE_TURN_SPINE, registerPreTurnIntercept, registeredPreTurnIntercepts } 
   await import('../src/routerIntercepts.js');
 const { toolsForRole } = await import('../src/auth/rbac.js');
 const { defaultPersonaId } = await import('../src/agent/personaRegistry.js');
+const { runtimeSecrets } = await import('../src/agent/secrets.js');
 
 /**
  * `createAgent` — the composition entry point that replaces community-agent's
@@ -186,6 +187,7 @@ test('a complete composition registers everything, appends intercepts after the 
             run: () => Promise.resolve('continue'),
           },
         ],
+        runtimeSecrets: [() => 'manifest-registered-secret-000'],
         migrations: [{ name: 'test-module/01.sql', sql: 'SELECT 1;' }],
       }),
     ],
@@ -226,6 +228,27 @@ test('a complete composition registers everything, appends intercepts after the 
   agent.assertStarted();
 
   await assert.rejects(agent.start(), /already started/);
+});
+
+test('SECURITY: a manifest-registered runtime secret reaches the outbound redaction backstop', async () => {
+  // The property under test is the WIRING: a module that declares the field
+  // needs no further step for its credential to be covered on every adapter
+  // send path — the gap PHASE-4 §8.2 names is closed by the manifest alone.
+  //
+  // Under `npm test` the complete composition above already registered the
+  // getter. Under the floor gate's `--test-name-pattern=^SECURITY:` run that
+  // test never ran and the singletons are unclaimed, so compose here — the
+  // check makes this test self-sufficient in both run modes.
+  if (!runtimeSecrets().includes('manifest-registered-secret-000')) {
+    await createAgent({
+      modules: [completeModule({ runtimeSecrets: [() => 'manifest-registered-secret-000'] })],
+      migrateOnStart: false,
+    });
+  }
+  assert.ok(
+    runtimeSecrets().includes('manifest-registered-secret-000'),
+    "a module's manifest-declared secret must be in the exact-value redaction list",
+  );
 });
 
 test('SECURITY: an incomplete composition never yields an Agent at all — there is nothing to start', async () => {

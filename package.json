@@ -41,6 +41,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && npm run typecheck:tests",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
     "test": "tsx --experimental-test-module-mocks --test tests/*.test.ts",
+    "_comment_test_consumption": "Packs the real tarball, scaffolds template/, installs the tarball and runs the scaffold's gate + both boot smokes — the same script consumption.yml's consume job runs, so green locally matches CI (issue #35). Skips VISIBLY without DATABASE_URL.",
+    "test:consumption": "node scripts/consumption-test.mjs",
     "test:security": "node scripts/check-security-test-count.mjs",
     "test:security:fix": "node scripts/check-security-test-count.mjs --write",
     "context:check": "node scripts/check-context-pack.mjs",

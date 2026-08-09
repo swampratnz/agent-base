@@ -85,7 +85,8 @@ the mechanism and the module registers data into it.
 ```
 npm run typecheck && npm run lint && npm run format:check \
   && npm run migrate && npm test && npm run build \
-  && npm run context:check && npm run test:security
+  && npm run context:check && npm run test:security \
+  && npm run test:consumption
 ```
 
 `DATABASE_URL` must point at a Postgres 16 + pgvector database for the
@@ -96,8 +97,17 @@ run them before claiming green. Use your OWN database, never a sibling repo's:
 concurrent runs corrupt each other's fixtures because `node:test` runs test
 FILES in parallel.
 
-CI runs exactly this, in three jobs (`build`, `lint`, `security-invariants`).
-All green before opening or updating a PR.
+CI runs exactly this: `ci.yml` in three jobs (`build`, `lint`,
+`security-invariants`), and `consumption.yml`'s `consume` job running the same
+`npm run test:consumption` across a toolchain matrix. All green before opening
+or updating a PR.
+
+- `npm run test:consumption` (issue #35) packs the real tarball, scaffolds
+  `template/` into a temp dir, installs the tarball — never a link — and runs
+  the scaffold's own gate, migrate and both boot smokes. It also needs
+  `DATABASE_URL` and SKIPS visibly without one. What it cannot reproduce
+  locally — the toolchain matrix, the Windows/macOS packs, the npm 12 + Baileys
+  job, the canary — stays workflow-level; treat those as post-merge signals.
 
 - `npm run typecheck` also runs `typecheck:tests` (`tsconfig.tests.json`), an
   **incremental ratchet**: `include` lists only test files that are type-clean.

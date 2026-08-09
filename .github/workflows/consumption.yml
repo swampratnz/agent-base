@@ -111,118 +111,17 @@ jobs:
 
       - run: npm ci
 
-      # `npm pack` does NOT run prepublishOnly (that fires on publish only) and
-      # there is no prepack hook, so dist/ must be built explicitly or the
-      # tarball ships stale or empty.
-      - name: Build and pack the real artifact
-        run: |
-          npm run build
-          mkdir -p "$RUNNER_TEMP/pkg"
-          npm pack --pack-destination "$RUNNER_TEMP/pkg"
-          ls -l "$RUNNER_TEMP/pkg"
-
-      - name: Scaffold template/ into a fresh directory
-        run: |
-          mkdir -p "$RUNNER_TEMP/app"
-          cp -R template/. "$RUNNER_TEMP/app/"
-
-      - name: Install the packed tarball (never a link)
-        working-directory: ${{ runner.temp }}/app
-        run: |
-          tarball="$(ls "$RUNNER_TEMP"/pkg/*.tgz)"
-          npm install "$tarball" --no-audit --no-fund
-          installed="$(node -p "require('@swampratnz/agent-base/package.json').version")"
-          echo "installed @swampratnz/agent-base@$installed"
-          # The scaffold's own declared range must ADMIT the version this repo
-          # builds. A caret on a 0.x major pins the minor, so template/'s range
-          # needs bumping on every framework minor — that is issue #21, and
-          # this is what stops it recurring silently.
-          repo_version="$(node -p "require('$GITHUB_WORKSPACE/package.json').version")"
-          if [ "$installed" != "$repo_version" ]; then
-            echo "::error::template/ resolved $installed but this repo builds $repo_version — bump template/package.json's range"
-            exit 1
-          fi
-
-      # The scaffolded repo's OWN gate, exactly as its package.json defines it.
-      # Not a re-run of ours: the gate scripts here execute out of
-      # node_modules/@swampratnz/agent-base/scripts/ with `--root .`, which is
-      # the arrangement a real scaffolded repo uses and nothing else tests.
-      - name: The scaffold's own gate
-        working-directory: ${{ runner.temp }}/app
-        run: |
-          npm run typecheck
-          npm run lint
-          npm run format:check
-          npm test
-          npm run build
-          npm run test:security
-          npm run context:check
-
-      - name: Migrate, and prove the SQL fragments travelled in the tarball
-        working-directory: ${{ runner.temp }}/app
-        run: |
-          npm run migrate
-          # check-dist-schema.mjs proves dist/ matches the manifest in OUR
-          # tree. Nothing proves the fragments reached a consumer — and a
-          # consumer that installs this and cannot migrate is broken in a way
-          # no unit test sees.
-          shipped="$(ls node_modules/@swampratnz/agent-base/dist/storage/schema/*.sql | wc -l)"
-          expected="$(ls "$GITHUB_WORKSPACE"/src/storage/schema/*.sql | wc -l)"
-          echo "fragments: $shipped shipped, $expected in source"
-          if [ "$shipped" != "$expected" ]; then
-            echo "::error::$expected .sql fragments in src/ but $shipped in the installed package"
-            exit 1
-          fi
-
-      # ---- Boot smoke (issue #23) -----------------------------------------
-      #
-      # Two halves, and the negative one is not a lesser test. Asserting the
-      # EXACT expected failure means any OTHER failure — an import-time throw
-      # like the one that killed community-agent's built entry point, a
-      # resolution error, a config parse — fails this step, because it would
-      # not produce this message.
-
-      - name: Boot smoke — the scaffold refuses an incomplete composition, naming every gap
-        working-directory: ${{ runner.temp }}/app
-        run: |
-          set +e
-          out="$(node dist/main.js 2>&1)"
-          status=$?
-          set -e
-          echo "$out"
-
-          if [ "$status" -eq 0 ]; then
-            echo "::error::the scaffold booted, but template/ registers only promptSections — it must refuse"
-            exit 1
-          fi
-
-          # The plan pass reports every problem TOGETHER, before any side
-          # effect. That property is the whole reason it is a separate pass, so
-          # assert the count, not just that something was mentioned.
-          case "$out" in
-            *"8 problem(s) with this composition"*) ;;
-            *) echo "::error::expected all 8 missing registrations reported at once"; exit 1 ;;
-          esac
-
-          for gap in "notice pack" "tool tiers" "tool-server parts" \
-                     "flagged-tool predicates" "skills manifest" "commands" \
-                     "default bad words" "default persona"; do
-            case "$out" in
-              *"$gap"*) ;;
-              *) echo "::error::the refusal did not name: $gap"; exit 1 ;;
-            esac
-          done
-
-      - name: Boot smoke — a COMPLETE composition starts, from the installed package
-        working-directory: ${{ runner.temp }}/app
-        run: |
-          cp "$GITHUB_WORKSPACE/.github/smoke/boot.mjs" ./boot.mjs
-          out="$(node boot.mjs 2>&1)"
-          echo "$out"
-          case "$out" in
-            *"SMOKE OK"*) ;;
-            *) echo "::error::a complete composition failed to reach started"; exit 1 ;;
-          esac
+      # The whole sequence — build, pack, scaffold, install the TARBALL, the
+      # scaffold's own gate, migrate + fragment count, both boot smokes — lives
+      # in scripts/consumption-test.mjs, and this job just runs it (issue #35).
+      # One script serving CI and `npm run test:consumption` locally is the
+      # point: the moment these checks existed only as workflow bash, a
+      # contributor (or a build worker) could run the documented full gate,
+      # correctly believe it was green, and still open a red PR. What stays
+      # workflow-level is what a single local run cannot reproduce: this job's
+      # toolchain MATRIX, and the other jobs in this file.
+      - name: Consumption test (exactly what `npm run test:consumption` runs)
+        run: npm run test:consumption
 
   # ---- Cross-platform pack (issue #25) ----------------------------------
   #

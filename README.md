@@ -152,15 +152,15 @@ database (and nothing else — the boot config slice validates db + log only).
 The DB-backed tests skip cleanly without it, so a contributor with no local
 Postgres is not blocked — but a skipped suite proves nothing.
 
-One gate has no local equivalent yet, and it is the one that has caught the most:
-the **consumption** suite ([`.github/workflows/consumption.yml`](.github/workflows/consumption.yml))
+The gate that has caught the most is the **consumption** suite
+([`.github/workflows/consumption.yml`](.github/workflows/consumption.yml)): it
 packs the real tarball, scaffolds [`template/`](template/) against it and boots
-it — across two Node/npm pairs, on Windows and macOS, and under npm 12 both
-with and without Baileys. Every defect that has reached a published artifact so
-far was in build or release machinery and invisible to a green `npm test`, which
-is why it exists. It runs on CI only, so the block above is not the whole gate;
-extracting it to `npm run test:consumption` is
-[issue #35](https://github.com/swampratnz/agent-base/issues/35).
+it. Every defect that has reached a published artifact so far was in build or
+release machinery and invisible to a green `npm test`, which is why it exists.
+Its core sequence runs locally as `npm run test:consumption` (issue #35) — the
+same script the workflow runs — so the gate line above ends with it. What stays
+CI-only is what one local run cannot reproduce: the two Node/npm pairs, the
+Windows and macOS packs, and npm 12 both with and without Baileys.
 
 Consuming it from an agent is `npm install @swampratnz/agent-base` — public
 npm, no token, no `.npmrc`. The barrel is a small convenience surface and
@@ -230,7 +230,7 @@ src/index.ts        the public barrel — live types only, from the files that r
 tests/              the lifted suite, including every SECURITY: case the floor counts
 scripts/            the gates (security floor, context pack, dist schema)
 docs/               VISION · ROADMAP · MODULE-API · PIPELINE · SECURITY · ARCHITECTURE
-                    STANDARDS · RELEASING · PHASE-4-PERSONAL-AGENT
+                    STANDARDS · RELEASING · PHASE-4-PERSONAL-AGENT · MULTI-AGENT
 docs/agents/        the committed context pack (gated by context:check)
 template/           new-agent repo template
 ```
