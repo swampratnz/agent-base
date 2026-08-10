@@ -175,6 +175,52 @@ Ingest sources and refresh topics are module **code** — not env, not chat inpu
 not a policy row. What the agent will go and read must not be steerable at
 runtime.
 
+### 8b. Guarded egress (`util/safeFetch.ts`)
+
+Every outbound HTTP request a deployment makes on a **caller-influenced** URL
+goes through `safeFetch`. Before it existed the base shipped no fetcher at all,
+so each consumer rolled its own and only one of them — a link checker — was
+hardened; its guard was private, so the fetchers written afterwards each used a
+bare `fetch()`. A framework that owns the security spine but not its own egress
+leaves every consumer to re-derive this, which is how it gets got wrong.
+
+What it enforces, all failing **closed**:
+
+- **https only**, and the caller's **host allowlist**, checked *before* DNS —
+  a refused host must not even produce a resolver query.
+- **Address denylist** on every resolved address: loopback, private, CGNAT
+  (tailnet), link-local including `169.254.169.254`, multicast, reserved, and
+  the v4-in-v6 forms (`::ffff:169.254.169.254` reaches the same metadata
+  endpoint as the bare literal). A host answering with a public *and* a private
+  address is refused outright rather than pinned to whichever sorted first.
+- **DNS pinning per hop.** Each hop resolves exactly once and the request
+  connects to that IP literal via a custom undici connector, with the original
+  hostname kept as TLS SNI/`Host`. Checking a hostname and then calling
+  `fetch()` does not work: `fetch()` resolves again, so a low-TTL record can
+  answer public for the check and private for the request.
+- **Redirects are followed manually** (`redirect: 'manual'`) so every hop is
+  re-allowlisted, re-resolved and re-pinned. Handing `redirect: 'follow'` to
+  the runtime would let it chase a `Location` into a private address unchecked
+  — the easiest way to reintroduce SSRF after "adding a guard".
+- **Content type from headers** before any body is read, and a **byte cap
+  enforced while streaming**. `Content-Length` is an early exit only; it is
+  absent on chunked responses and free to lie, so the stream is the
+  enforcement.
+
+**Policy is the caller's, enforcement is this module's.** `safeFetch` takes a
+`FetchPolicy` and never decides which hosts are reasonable — a framework cannot
+know that. There is deliberately no "allow any host" value: `allowHosts` is
+required and an empty list refuses everything, so opening the egress surface is
+always an explicit act by a deployment.
+
+This does **not** relax §1's rule that `WebFetch` stays disallowed for every
+tier. That ban is not about trust level — the *model* composes the URL, so an
+injection can exfiltrate conversation content through a query string. Raising
+the tier makes that worse, not better. A deployment wanting admin-facing
+fetching builds a tool over `safeFetch`, where the host allowlist is enforced
+before the request, the resolved URL can be shown to a human for CONFIRM, and
+the call lands in the audit log.
+
 ### 9. Auditability
 
 Privileged mutations go through the kernel's audit helper: an audit row plus a

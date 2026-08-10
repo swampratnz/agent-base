@@ -18,6 +18,7 @@
   "rbacFailClosed.test.ts": 2,
   "redeploy.test.ts": 2,
   "repository.test.ts": 117,
+  "safeFetch.test.ts": 17,
   "sanitizeName.test.ts": 3,
   "secrets.test.ts": 8,
   "securityFloorGate.test.ts": 8,
