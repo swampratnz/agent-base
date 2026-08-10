@@ -86,6 +86,35 @@ export const integrationsSlice = {
     .string()
     .optional()
     .transform((v) => v === 'true'),
+
+  // --- Guarded page fetching (a tool built over util/safeFetch) --------------
+  // The allowlist IS the switch: a non-empty FETCH_PAGE_ALLOWED_HOSTS turns
+  // caller-driven page fetching on, an empty/absent one leaves it off. There is
+  // deliberately no separate on/off flag for it, for two reasons (and the flag
+  // is not NAMED here on purpose: a consumer pins feature-flag coverage with a
+  // bare `*_ENABLED` regex over this file's COMPILED text, so even a comment
+  // mentioning such a name would register as a real variable):
+  //
+  //   1. It makes the dangerous state UNREPRESENTABLE. A separate flag admits
+  //      "enabled with no allowlist" — an open proxy in intent if not effect —
+  //      which then has to be caught by a refinement. One variable cannot
+  //      disagree with itself.
+  //   2. Presence-as-switch is already this schema's convention for exactly
+  //      this shape: HEALTH_PORT unset means no listener, DISCORD_ALLOWED_
+  //      CHANNEL_IDS empty means unrestricted. Neither carries a separate
+  //      on/off twin either.
+  //
+  // Comma-separated hostnames. An exact host matches only itself; a
+  // `.`-prefixed entry (".example.com") admits the domain and its subdomains.
+  FETCH_PAGE_ALLOWED_HOSTS: z.string().optional(),
+  // Ceiling on the decoded body, enforced while STREAMING (never from
+  // Content-Length, which can lie). 512 KB is generous for an article and far
+  // below anything that would strain a turn.
+  FETCH_PAGE_MAX_BYTES: z.coerce.number().int().positive().max(5_000_000).default(512_000),
+  FETCH_PAGE_TIMEOUT_MS: z.coerce.number().int().positive().max(60_000).default(10_000),
+  FETCH_PAGE_MAX_REDIRECTS: z.coerce.number().int().nonnegative().max(10).default(3),
+  // Per-caller daily cap. 0 = unlimited, matching IMAGE_GEN_DAILY_LIMIT.
+  FETCH_PAGE_DAILY_LIMIT: z.coerce.number().int().nonnegative().default(20),
 };
 
 export type IntegrationsEnv = z.infer<z.ZodObject<typeof integrationsSlice>>;

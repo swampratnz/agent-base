@@ -145,6 +145,16 @@ function buildConfig(env: ParsedEnv) {
       timeoutMs: env.IMAGE_GEN_TIMEOUT_MS,
       dailyLimit: env.IMAGE_GEN_DAILY_LIMIT,
     },
+    fetchPage: {
+      // Derived, not configured: the allowlist is the switch, so "on" and
+      // "has somewhere to go" cannot drift apart.
+      enabled: csv(env.FETCH_PAGE_ALLOWED_HOSTS).length > 0,
+      allowedHosts: csv(env.FETCH_PAGE_ALLOWED_HOSTS),
+      maxBytes: env.FETCH_PAGE_MAX_BYTES,
+      timeoutMs: env.FETCH_PAGE_TIMEOUT_MS,
+      maxRedirects: env.FETCH_PAGE_MAX_REDIRECTS,
+      dailyLimit: env.FETCH_PAGE_DAILY_LIMIT,
+    },
     devTeam: {
       enabled: env.DEV_TEAM_ENABLED ?? false,
       endpointUrl: env.DEV_TEAM_ENDPOINT_URL,

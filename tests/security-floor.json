@@ -1,5 +1,6 @@
 {
   "backgroundJobHealth.test.ts": 1,
+  "configSlices.test.ts": 1,
   "createAgent.test.ts": 2,
   "failClosedMessages.test.ts": 1,
   "gatedNotice.test.ts": 6,
@@ -18,6 +19,7 @@
   "rbacFailClosed.test.ts": 2,
   "redeploy.test.ts": 2,
   "repository.test.ts": 117,
+  "safeFetch.test.ts": 17,
   "sanitizeName.test.ts": 3,
   "secrets.test.ts": 8,
   "securityFloorGate.test.ts": 8,
