@@ -1,5 +1,6 @@
 {
   "backgroundJobHealth.test.ts": 1,
+  "configSlices.test.ts": 1,
   "createAgent.test.ts": 2,
   "failClosedMessages.test.ts": 1,
   "gatedNotice.test.ts": 6,

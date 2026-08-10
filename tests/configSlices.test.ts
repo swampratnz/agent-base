@@ -219,3 +219,35 @@ test('loadConfig: DISPLAY_TIMEZONE/DISPLAY_LOCALE are validated by Intl at boot,
   assert.equal(nz.behaviour.displayTimezone, 'Pacific/Auckland');
   assert.equal(nz.behaviour.displayLocale, 'en-NZ');
 });
+
+// --- Guarded page fetching --------------------------------------------------
+
+test('SECURITY: loadConfig refuses FETCH_PAGE_ENABLED without an allowlist — caller-driven egress must never boot as an open proxy', () => {
+  // A tool that refused every call at runtime would look like a bug to whoever
+  // just enabled it. Failing at boot names the missing decision instead.
+  assert.throws(
+    () => loadConfig({ ...MINIMAL_ENV, FETCH_PAGE_ENABLED: 'true' }),
+    /FETCH_PAGE_ALLOWED_HOSTS is required when FETCH_PAGE_ENABLED=true/,
+  );
+  assert.throws(
+    () => loadConfig({ ...MINIMAL_ENV, FETCH_PAGE_ENABLED: 'true', FETCH_PAGE_ALLOWED_HOSTS: '   ' }),
+    /FETCH_PAGE_ALLOWED_HOSTS is required when FETCH_PAGE_ENABLED=true/,
+    'whitespace is not an allowlist',
+  );
+});
+
+test('loadConfig: fetch-page defaults are off, and the allowlist parses to a trimmed list', () => {
+  const off = loadConfig(MINIMAL_ENV);
+  assert.equal(off.fetchPage.enabled, false, 'off unless explicitly enabled');
+  assert.deepEqual(off.fetchPage.allowedHosts, []);
+
+  const on = loadConfig({
+    ...MINIMAL_ENV,
+    FETCH_PAGE_ENABLED: 'true',
+    FETCH_PAGE_ALLOWED_HOSTS: 'docs.example.test, .example.org ',
+  });
+  assert.equal(on.fetchPage.enabled, true);
+  assert.deepEqual(on.fetchPage.allowedHosts, ['docs.example.test', '.example.org']);
+  assert.equal(on.fetchPage.maxBytes, 512_000);
+  assert.equal(on.fetchPage.maxRedirects, 3);
+});

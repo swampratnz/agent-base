@@ -86,6 +86,28 @@ export const integrationsSlice = {
     .string()
     .optional()
     .transform((v) => v === 'true'),
+
+  // --- Guarded page fetching (a tool built over util/safeFetch) --------------
+  // Off by default. This opens an outbound egress surface driven by a caller's
+  // request, so every knob here is a bound, and the allowlist has no
+  // "everything" value — see util/safeFetch.ts for what is enforced and why.
+  FETCH_PAGE_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
+  // Comma-separated hostnames. An exact host matches only itself; a
+  // `.`-prefixed entry (".example.com") admits the domain and its subdomains.
+  // REQUIRED when the tool is enabled: there is deliberately no value meaning
+  // "any host", so turning this on always names what it opens.
+  FETCH_PAGE_ALLOWED_HOSTS: z.string().optional(),
+  // Ceiling on the decoded body, enforced while STREAMING (never from
+  // Content-Length, which can lie). 512 KB is generous for an article and far
+  // below anything that would strain a turn.
+  FETCH_PAGE_MAX_BYTES: z.coerce.number().int().positive().max(5_000_000).default(512_000),
+  FETCH_PAGE_TIMEOUT_MS: z.coerce.number().int().positive().max(60_000).default(10_000),
+  FETCH_PAGE_MAX_REDIRECTS: z.coerce.number().int().nonnegative().max(10).default(3),
+  // Per-caller daily cap. 0 = unlimited, matching IMAGE_GEN_DAILY_LIMIT.
+  FETCH_PAGE_DAILY_LIMIT: z.coerce.number().int().nonnegative().default(20),
 };
 
 export type IntegrationsEnv = z.infer<z.ZodObject<typeof integrationsSlice>>;
@@ -118,6 +140,18 @@ export const integrationsRefinements: EnvRefinement<IntegrationsEnv>[] = [
     params: {
       message: 'DEV_TEAM_ENDPOINT_URL and DEV_TEAM_AUTH_TOKEN are both required when DEV_TEAM_ENABLED=true',
       path: ['DEV_TEAM_ENABLED'],
+    },
+  },
+  {
+    // Enabling caller-driven egress without naming the hosts it may reach
+    // would be an open proxy. There is deliberately no "allow everything"
+    // value, so an absent allowlist with the tool ON is a BOOT error rather
+    // than a tool that refuses every call at runtime — which would look like a
+    // bug to whoever just enabled it, not like the safety property it is.
+    check: (e) => !e.FETCH_PAGE_ENABLED || Boolean(e.FETCH_PAGE_ALLOWED_HOSTS?.trim()),
+    params: {
+      message: 'FETCH_PAGE_ALLOWED_HOSTS is required when FETCH_PAGE_ENABLED=true',
+      path: ['FETCH_PAGE_ALLOWED_HOSTS'],
     },
   },
 ];
