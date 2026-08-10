@@ -222,28 +222,24 @@ test('loadConfig: DISPLAY_TIMEZONE/DISPLAY_LOCALE are validated by Intl at boot,
 
 // --- Guarded page fetching --------------------------------------------------
 
-test('SECURITY: loadConfig refuses FETCH_PAGE_ENABLED without an allowlist — caller-driven egress must never boot as an open proxy', () => {
-  // A tool that refused every call at runtime would look like a bug to whoever
-  // just enabled it. Failing at boot names the missing decision instead.
-  assert.throws(
-    () => loadConfig({ ...MINIMAL_ENV, FETCH_PAGE_ENABLED: 'true' }),
-    /FETCH_PAGE_ALLOWED_HOSTS is required when FETCH_PAGE_ENABLED=true/,
-  );
-  assert.throws(
-    () => loadConfig({ ...MINIMAL_ENV, FETCH_PAGE_ENABLED: 'true', FETCH_PAGE_ALLOWED_HOSTS: '   ' }),
-    /FETCH_PAGE_ALLOWED_HOSTS is required when FETCH_PAGE_ENABLED=true/,
-    'whitespace is not an allowlist',
-  );
-});
-
-test('loadConfig: fetch-page defaults are off, and the allowlist parses to a trimmed list', () => {
+test('SECURITY: the fetch allowlist IS the switch — there is no flag that could be on while nothing is listed', () => {
+  // A separate FETCH_PAGE_ENABLED would admit "enabled with an empty
+  // allowlist", a state that then needs a refinement to catch. One variable
+  // cannot disagree with itself, so the dangerous state is unrepresentable
+  // rather than merely rejected. Same shape as HEALTH_PORT and
+  // DISCORD_ALLOWED_CHANNEL_IDS, neither of which carries an _ENABLED twin.
   const off = loadConfig(MINIMAL_ENV);
-  assert.equal(off.fetchPage.enabled, false, 'off unless explicitly enabled');
+  assert.equal(off.fetchPage.enabled, false, 'absent allowlist = off');
   assert.deepEqual(off.fetchPage.allowedHosts, []);
 
+  const blank = loadConfig({ ...MINIMAL_ENV, FETCH_PAGE_ALLOWED_HOSTS: '  ,  ' });
+  assert.equal(blank.fetchPage.enabled, false, 'SECURITY: whitespace/commas are not an allowlist');
+  assert.deepEqual(blank.fetchPage.allowedHosts, []);
+});
+
+test('loadConfig: a non-empty fetch allowlist enables the surface and parses to a trimmed list', () => {
   const on = loadConfig({
     ...MINIMAL_ENV,
-    FETCH_PAGE_ENABLED: 'true',
     FETCH_PAGE_ALLOWED_HOSTS: 'docs.example.test, .example.org ',
   });
   assert.equal(on.fetchPage.enabled, true);

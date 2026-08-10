@@ -213,6 +213,13 @@ know that. There is deliberately no "allow any host" value: `allowHosts` is
 required and an empty list refuses everything, so opening the egress surface is
 always an explicit act by a deployment.
 
+For the same reason there is no `FETCH_PAGE_ENABLED`: the allowlist **is** the
+switch (`FETCH_PAGE_ALLOWED_HOSTS`). A separate flag would admit "enabled with
+nothing listed" — a state that then has to be *caught* by a refinement, rather
+than one that cannot be written down. One variable cannot disagree with itself.
+This matches `HEALTH_PORT` and `DISCORD_ALLOWED_CHANNEL_IDS`, neither of which
+carries an `_ENABLED` twin.
+
 This does **not** relax §1's rule that `WebFetch` stays disallowed for every
 tier. That ban is not about trust level — the *model* composes the URL, so an
 injection can exfiltrate conversation content through a query string. Raising
