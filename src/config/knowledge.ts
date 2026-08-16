@@ -33,6 +33,36 @@ export const knowledgeSlice = {
     .string()
     .optional()
     .transform((v) => v === 'true'),
+  // How similar an existing `knowledge` entry must be to a proposed topic
+  // before that topic counts as ALREADY COVERED and the proposal is refused
+  // (`findKnowledgeCoveringTopic`).
+  //
+  // Deliberately NOT the #95 retrieval floor
+  // (KNOWLEDGE_SEARCH_RELEVANCE_THRESHOLD, 0.35), which is what this used to
+  // be. That floor answers "is this entry worth SHOWING someone who asked?" —
+  // a generous bar, because a marginally-relevant hit costs a reader a glance.
+  // Coverage answers "is this contribution redundant, so we refuse it?" — and
+  // at 0.35 a member's genuinely new tip is rejected as a duplicate of a
+  // loosely-related entry. That is a failure the member sees and the
+  // maintainer never does.
+  //
+  // Nor is it the 0.92 duplicate floor. Both existing 0.92 comparisons are
+  // LIKE-vs-LIKE (entry-vs-entry in saveKnowledge's nudge, topic-vs-topic in
+  // candidateTopicAlreadyReviewed). This one is CROSS-SHAPE: a short topic
+  // phrase against `embed(title + "\n" + content)` of a whole entry, where
+  // cosine similarity runs systematically lower for the same semantic match.
+  // Reusing 0.92 would mean the guard effectively never fires — silently
+  // disabling it rather than tightening it.
+  //
+  // So it sits between, and the default is a judgement call rather than a
+  // measured optimum — which is precisely why it is a knob. The two failure
+  // directions are asymmetric: too HIGH merely lets a redundant candidate
+  // reach the admin review queue, where a human declines it in one click; too
+  // LOW refuses a real contribution and tells a member their tip is a
+  // duplicate when it is not. Tune upward freely; tune downward with evidence
+  // (every decision is logged with the observed similarity — see
+  // findKnowledgeCoveringTopic).
+  KNOWLEDGE_COVERAGE_SIMILARITY_THRESHOLD: z.coerce.number().min(0).max(1).default(0.6),
   // Close the answered-question -> knowledge-base loop (issue #726,
   // CAPABILITY-IDEAS.md §D2): when a member rates a helpful:true, UNGROUNDED
   // reply (no meta->>'knowledgeEntryId'), rate_answer drafts a

@@ -1,9 +1,9 @@
 import pgvector from 'pgvector/pg';
 import type { Platform } from '../../platforms/types.js';
+import { config } from '../../config.js';
 import { logger } from '../../logger.js';
 import { pool } from '../db.js';
 import { embed } from '../embeddings.js';
-import { KNOWLEDGE_SEARCH_RELEVANCE_THRESHOLD } from './shared.js';
 import {
   KNOWLEDGE_DUPLICATE_SIMILARITY_THRESHOLD,
   saveKnowledge,
@@ -296,10 +296,20 @@ export async function candidateTopicAlreadyReviewed(
 }
 
 /**
- * The `knowledge` entry (if any) that already covers this topic above the
- * #95 relevance floor (`KNOWLEDGE_SEARCH_RELEVANCE_THRESHOLD`) — the other
- * half of the builder's dedup guard, so the candidate queue doesn't refill
- * with a suggestion an admin already answered. Takes the topic's already-
+ * The `knowledge` entry (if any) that already covers this topic above
+ * `KNOWLEDGE_COVERAGE_SIMILARITY_THRESHOLD` — the other half of the builder's
+ * dedup guard, so the candidate queue doesn't refill with a suggestion an
+ * admin already answered.
+ *
+ * That threshold used to be the #95 retrieval floor
+ * (`KNOWLEDGE_SEARCH_RELEVANCE_THRESHOLD`, 0.35), which conflated two
+ * different questions: "is this worth showing to someone who asked?" and "is
+ * this contribution redundant enough to refuse?". At 0.35 the second answer
+ * was far too eager — a member's genuinely new tip could be rejected as a
+ * duplicate of a loosely-related entry. See the config comment for why the
+ * replacement is neither that floor nor the 0.92 duplicate floor.
+ *
+ * Takes the topic's already-
  * computed embedding (issue #503 — reused from `candidateTopicAlreadyReviewed`
  * rather than re-embedded) instead of embedding it again; a null vector
  * (exact-match short circuit upstream, or a failed embed) fails open to
@@ -323,7 +333,22 @@ export async function findKnowledgeCoveringTopic(
     [pgvector.toSql(vec)],
   );
   const top = rows[0];
-  if (!top || Number(top.similarity) < KNOWLEDGE_SEARCH_RELEVANCE_THRESHOLD) return null;
+  if (!top) return null;
+  const similarity = Number(top.similarity);
+  const threshold = config.contextCandidates.coverageSimilarityThreshold;
+  const covered = similarity >= threshold;
+  // Log EVERY decision with the observed similarity, not just the refusals.
+  // The threshold's default is a judgement call (see the config comment), and
+  // the only way to replace judgement with evidence is a corpus of real
+  // near-misses: a run of "covered:false, similarity 0.58" says the bar is a
+  // shade high, a run of "covered:true" on topics an admin then accepts anyway
+  // says it is too low. Debug level — this fires on every candidate draft and
+  // every member tip, so it must not be chatty at the default level.
+  logger.debug(
+    { similarity, threshold, covered, entryId: covered ? Number(top.id) : undefined },
+    'Knowledge-coverage check',
+  );
+  if (!covered) return null;
   return { id: Number(top.id), title: top.title ?? null };
 }
 
