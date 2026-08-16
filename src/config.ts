@@ -251,6 +251,7 @@ function buildConfig(env: ParsedEnv) {
     },
     contextCandidates: {
       enabled: env.CONTEXT_CANDIDATES_ENABLED ?? false,
+      coverageSimilarityThreshold: env.KNOWLEDGE_COVERAGE_SIMILARITY_THRESHOLD,
     },
     knowledgeAnswerCandidate: {
       enabled: env.KNOWLEDGE_ANSWER_CANDIDATE_ENABLED ?? false,
