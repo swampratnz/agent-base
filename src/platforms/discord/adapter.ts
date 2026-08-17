@@ -825,15 +825,43 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
       config.rbac.accessMode.discord === 'open'
         ? this.textPack.welcomeMessageOpen
         : this.textPack.welcomeMessage;
-    const welcomeMessage =
-      welcomeMessageForLanguage ?? (await this.textPack.policyText.welcomeMessage()) ?? defaultWelcomeMessage;
-    const guidelines = await this.textPack.policyText.guidelines();
+    // Filter the CONFIGURED text, not the static fallbacks.
+    //
+    // `policyText.welcomeMessage`/`welcomeMessageForLanguage`/`guidelines` are
+    // stored values written by the admin-tier `set_welcome_message` and
+    // `set_community_guidelines` tools, whose text argument the MODEL composes
+    // — so they need secret redaction and the code policy exactly as much as a
+    // normal reply does, and previously got neither on this path.
+    //
+    // `textPack.welcomeMessage`/`welcomeMessageOpen` are static strings the
+    // deployment ships. They are not model output and are deliberately left
+    // alone: `filterOutbound` also rewrites em dashes, and that rule exists to
+    // catch the MODEL disobeying the system prompt (see stripEmDashes), not to
+    // repunctuate an author's own copy. Running the fallbacks through it would
+    // silently edit shipped text — which is exactly what the adapter tests
+    // caught when this first went through `filtered()` wholesale.
+    const configuredWelcome = welcomeMessageForLanguage ?? (await this.textPack.policyText.welcomeMessage());
+    const welcomeMessage = configuredWelcome ? await this.filtered(configuredWelcome) : defaultWelcomeMessage;
+    const configuredGuidelines = await this.textPack.policyText.guidelines();
+    const guidelines = configuredGuidelines
+      ? await this.filtered(configuredGuidelines)
+      : configuredGuidelines;
     const welcomeText = guidelines
       ? `${welcomeMessage}\n\n${notice('guidelinesHeading')}\n${guidelines}`
       : welcomeMessage;
 
+    // Chunked, and that part is load-bearing rather than tidiness: filtering
+    // can GROW the text (`applyCodePolicy` swaps a fenced block for
+    // `codeOmittedNote` and appends `codeTruncatedNote` to a truncated one),
+    // while any cap a deployment puts on the stored text is necessarily sized
+    // against the UNFILTERED value — and is that deployment's business, not
+    // this package's. Sending unchunked would convert a filter that grew the
+    // text into a rejected send, turning a message that was merely unfiltered
+    // into no welcome at all.
     try {
-      await member.send({ content: welcomeText, allowedMentions: { parse: [] } });
+      for (const chunk of chunkText(welcomeText, MAX_DISCORD_LEN)) {
+        await member.send({ content: chunk, allowedMentions: { parse: [] } });
+      }
       return;
     } catch (err) {
       logger.warn({ err, userId: member.id }, 'Welcome DM failed; trying channel fallback');
@@ -844,10 +872,18 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
     try {
       const channel = await this.client.channels.fetch(channelId);
       if (!channel || !channel.isTextBased() || !('send' in channel)) return;
-      await channel.send({
-        content: `Welcome <@${member.id}>! ${welcomeText}`,
-        allowedMentions: { users: [member.id] },
-      });
+      // The greeting prefix is counted INSIDE the chunk budget rather than
+      // prepended after chunking, so a full-length welcome can't push the first
+      // message past the limit. Only that first chunk carries the mention —
+      // later chunks use `parse: []`, so a chunked welcome pings the member
+      // once, not once per chunk.
+      const chunks = chunkText(`Welcome <@${member.id}>! ${welcomeText}`, MAX_DISCORD_LEN);
+      for (const [i, chunk] of chunks.entries()) {
+        await channel.send({
+          content: chunk,
+          allowedMentions: i === 0 ? { users: [member.id] } : { parse: [] },
+        });
+      }
     } catch (err) {
       logger.warn({ err, userId: member.id, channelId }, 'Welcome channel fallback failed');
     }
