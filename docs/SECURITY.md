@@ -116,10 +116,23 @@ cannot forge a pending-action notice.
 
 ### 4. Outbound filtering
 
-Every send path passes the base outbound filter: exact-value secret redaction
-plus content policy. Module string packs and adapter text packs supply
-*content*; they return plain strings that the base still filters, so a pack can
-never route around it.
+Every send path carrying model-derived or stored-configurable text passes the
+base outbound filter: exact-value secret redaction plus content policy. Module
+string packs and adapter text packs supply *content*; they return plain strings
+that the base still filters, so a pack can never route around it.
+
+The one deliberate exception is a pack's own **static fallback** strings — the
+`AdapterTextPack` welcome defaults, used when no `policyText` value is
+configured. Those are shipped copy, not model output and not reachable by any
+caller, and `filterOutbound` also rewrites em dashes: a rule that exists to
+catch the model disobeying the system prompt (`stripEmDashes`), not to
+repunctuate an author's text. Running defaults through it would silently edit
+shipped strings while protecting nothing. **The configured values those
+fallbacks stand in for are a different matter and ARE filtered**: `policyText`
+is written by admin-tier tools whose argument the model composes, so it carries
+exactly the model-derived risk the filter exists for. If you add a send path,
+the test is not "is this an adapter?" but "could a model or an operator have
+put this string here?" — if yes, it filters.
 
 The redacted value list is the backstop for egress paths nobody thought of,
 rather than for the one send site that already redacts. Base credentials are

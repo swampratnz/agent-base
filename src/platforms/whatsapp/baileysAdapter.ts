@@ -1002,8 +1002,22 @@ export class BaileysAdapter implements PlatformAdapter {
       config.rbac.accessMode.whatsapp === 'open'
         ? this.textPack.welcomeMessageOpen
         : this.textPack.welcomeMessage;
-    const welcomeMessage = (await this.textPack.policyText.welcomeMessage()) ?? defaultWelcomeMessage;
-    const guidelines = await this.textPack.policyText.guidelines();
+    // Filter the CONFIGURED text, not the static fallbacks — same split, and
+    // the same reasoning, as the Discord adapter's join welcome. `policyText`
+    // values are written by the admin-tier `set_welcome_message`/
+    // `set_community_guidelines` tools whose argument the MODEL composes, so
+    // they need secret redaction and the code policy; `textPack`'s defaults are
+    // shipped strings and must not be silently repunctuated by the em-dash rule
+    // that exists to police model output.
+    //
+    // No chunking here, unlike Discord: this transport has no practical body
+    // limit and nothing else in this file chunks either.
+    const configuredWelcome = await this.textPack.policyText.welcomeMessage();
+    const welcomeMessage = configuredWelcome ? await this.filtered(configuredWelcome) : defaultWelcomeMessage;
+    const configuredGuidelines = await this.textPack.policyText.guidelines();
+    const guidelines = configuredGuidelines
+      ? await this.filtered(configuredGuidelines)
+      : configuredGuidelines;
     const welcomeText = guidelines
       ? `${welcomeMessage}\n\n${notice('guidelinesHeading')}\n${guidelines}`
       : welcomeMessage;
