@@ -87,6 +87,7 @@
     "tests/secrets.test.ts",
     "tests/securityFloorGate.test.ts",
     "tests/storageLifecycle.test.ts",
+    "tests/textAttachment.test.ts",
     "tests/textChunk.test.ts",
     "tests/voiceTranscribe.test.ts",
     "tests/whatsappCloudWire.test.ts",
