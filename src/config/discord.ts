@@ -118,4 +118,28 @@ export const discordSlice = {
   // DEV_TEAM_DAILY_LIMIT, bounding the real per-image multimodal token cost a
   // single caller could otherwise run up.
   IMAGE_INPUT_DAILY_LIMIT_PER_USER: z.coerce.number().int().min(0).default(10),
+
+  // Text-attachment input (`message.txt` and friends). OFF by default and
+  // gated exactly like image input above, though for a different reason: an
+  // image's risk is that model-side interpretation is invisible to every
+  // inbound filter, whereas an attached file's contents are ordinary text
+  // landing in the prompt beside the operator's own words — a sharper
+  // injection vector rather than a blinder one, and one that DOES flow through
+  // moderator.scan because it is folded into `text`. The quarantine wrapper in
+  // media/textAttachment.ts is what contains it; 'super_admin' is the same
+  // conservative default both sibling gates already take.
+  TEXT_INPUT_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
+  TEXT_INPUT_MIN_ROLE: z.enum(['super_admin', 'admin', 'member', 'guest']).default('super_admin'),
+  // Refused WITHOUT fetching, from Discord's own attachment metadata. 256 KB
+  // sits far above the few-KB `message.txt` that client-side truncation
+  // produces — the case this feature exists for — while still bounding what a
+  // single message can push into a turn's context.
+  TEXT_INPUT_MAX_BYTES: z.coerce.number().int().positive().default(262_144),
+  // Rolling calendar-day cap per sender (0 = unlimited), checked BEFORE the
+  // MIME/byte check and any fetch — same shape and discipline as
+  // IMAGE_INPUT_DAILY_LIMIT_PER_USER.
+  TEXT_INPUT_DAILY_LIMIT_PER_USER: z.coerce.number().int().min(0).default(20),
 };

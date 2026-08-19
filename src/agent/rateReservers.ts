@@ -19,6 +19,19 @@ import { makeCalendarDayReserver, makeSlidingWindowReserver } from '../util/rate
 export const reserveImageInputDaily = makeCalendarDayReserver();
 
 /**
+ * Discord text-attachment fetches per platform-qualified sender, for the
+ * rolling calendar-day cap (TEXT_INPUT_DAILY_LIMIT_PER_USER). Its own bucket
+ * rather than a share of `reserveImageInputDaily`: the two caps bound different
+ * costs (a few hundred KB of prose against a multimodal image) and default to
+ * different numbers, so pooling them would let a day of screenshots silently
+ * exhaust someone's ability to attach a file. Checked in the adapter BEFORE the
+ * MIME/byte check and any fetch, so an at-cap sender's attachment is never
+ * inspected further. `key` MUST be platform-qualified (`` `discord:${senderId}` ``),
+ * matching the convention the two reservers above already established.
+ */
+export const reserveTextInputDaily = makeCalendarDayReserver();
+
+/**
  * Reserve one voice-transcription slot for `key` against a rolling hourly
  * cap (issue #507; platform-qualified in issue #732 —
  * `config.whatsapp.voice.rateLimitPerHour` /

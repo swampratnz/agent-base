@@ -33,8 +33,17 @@ import { formatEventTime } from '../../util/eventTime.js';
 import { logger, hashId } from '../../logger.js';
 import { filterOutbound } from '../../agent/outbound.js';
 import { runtimeSecrets } from '../../agent/secrets.js';
-import { reserveVoiceTranscriptionSlot, reserveImageInputDaily } from '../../agent/rateReservers.js';
+import {
+  reserveVoiceTranscriptionSlot,
+  reserveImageInputDaily,
+  reserveTextInputDaily,
+} from '../../agent/rateReservers.js';
 import { transcribeVoiceNote } from '../../media/voiceTranscribe.js';
+import {
+  renderTextAttachment,
+  renderTextAttachmentRefusal,
+  textAttachmentMimeType,
+} from '../../media/textAttachment.js';
 import { shouldNotify as shouldNotifyVoiceLanguageCaveat } from '../../voiceLanguageCaveatNotice.js';
 import { notice, isRegisteredLanguage } from '../../strings/catalogue.js';
 import { getCodeAnswersPolicy } from '../../storage/policyStore.js';
@@ -459,6 +468,29 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
         ? await this.maybeFetchImageAttachment(voiceAttachment, message.author.id)
         : undefined;
 
+    // Discord text-attachment input (opt-in, TEXT_INPUT_ENABLED). Keyed on the
+    // same single-attachment slot as the two paths above and mutually
+    // exclusive with both — an image and a text file cannot be the same
+    // attachment, and a voice bubble always reports `duration_secs`.
+    //
+    // This exists because Discord's own client silently truncates a long
+    // message: it keeps the opening lines inline and moves the rest into an
+    // auto-generated `message.txt`. Before this, that attachment matched no
+    // path and was dropped, so the agent reasoned over a fragment believing it
+    // had the whole message — and, worse, could not tell that it hadn't.
+    //
+    // The result is folded into `text` rather than carried in its own
+    // `IncomingMessage` field, matching what the voice path does with a
+    // transcript. That is the security-preferable half of the choice: `text`
+    // is what `moderator.scan` reads and what the `interactions` row persists,
+    // so an attachment's contents are scanned and audited exactly like typed
+    // text — where `image` bypasses both. Resolved BEFORE the scan below for
+    // the same reason the voice transcript is.
+    if (!image && voiceAttachment && voiceAttachment.duration == null) {
+      const attached = await this.maybeReadTextAttachment(voiceAttachment, message.author.id);
+      if (attached) text = text ? `${text}\n\n${attached}` : attached;
+    }
+
     // Auto-moderation scans EVERY in-scope guild message (not just addressed
     // ones), independently of the agent path below. Fire-and-forget so a scan
     // failure can never block or delay normal handling. DMs aren't scanned —
@@ -664,6 +696,89 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
     }
     const buffer = Buffer.from(await response.arrayBuffer());
     return { data: buffer.toString('base64'), mimeType };
+  }
+
+  /**
+   * Resolve a single Discord attachment to a quarantined block of text to fold
+   * into `IncomingMessage.text`, or `undefined` to leave the message untouched
+   * — the SINGLE gate for the feature, mirroring `maybeFetchImageAttachment`'s
+   * exact order:
+   *   1. TEXT_INPUT_ENABLED must be on (off by default);
+   *   2. the sender's resolved tier must meet TEXT_INPUT_MIN_ROLE (default
+   *      'super_admin'). At the default this stays a pure `isSuperAdmin` env
+   *      check — no DB call — exactly like the image and voice gates;
+   *   3. TEXT_INPUT_DAILY_LIMIT_PER_USER is checked next, BEFORE the MIME/byte
+   *      check, so an at-cap sender never has their attachment inspected;
+   *   4. the attachment's `contentType` must be on the allowlist and its
+   *      `size` must be under TEXT_INPUT_MAX_BYTES — both read from Discord's
+   *      own attachment metadata, so this never fetches to find out;
+   *   5. only then is the attachment fetched and decoded.
+   *
+   * SECURITY: the two gates diverge on ONE point, deliberately. Every refusal
+   * from step 3 onward returns a visible marker rather than `undefined`, so the
+   * turn always carries the fact that a file went unread. Silence is the actual
+   * defect this feature fixes: an agent that cannot tell a message was
+   * truncated answers the fragment confidently instead of asking. Steps 1 and 2
+   * stay silent on purpose — a disabled feature and a below-tier sender must
+   * not have their existence advertised, and neither reaches a fetch.
+   */
+  private async maybeReadTextAttachment(
+    attachment: Attachment,
+    senderId: string,
+  ): Promise<string | undefined> {
+    if (!config.discord.text.enabled) return undefined;
+    const minRole = config.discord.text.minRole;
+    if (minRole === 'super_admin') {
+      if (!isSuperAdmin('discord', senderId)) return undefined;
+    } else {
+      const role = await resolveRole('discord', senderId);
+      if (!atLeast(role, minRole)) return undefined;
+    }
+
+    // A candidate at all? Anything off the allowlist is left entirely alone —
+    // an image or a PDF is not a "refused text attachment", it is simply not
+    // this path's business, and marking it would spam every unrelated upload.
+    const mimeType = textAttachmentMimeType(attachment.contentType);
+    if (!mimeType) return undefined;
+
+    const name = attachment.name;
+    if (!reserveTextInputDaily(`discord:${senderId}`, config.discord.text.dailyLimitPerUser)) {
+      logger.info(
+        { sender: hashId(senderId), limit: config.discord.text.dailyLimitPerUser },
+        'Discord text attachment refused — sender hit the daily text-input cap',
+      );
+      return renderTextAttachmentRefusal('daily-cap', name);
+    }
+    if (attachment.size > config.discord.text.maxBytes) {
+      logger.info(
+        { size: attachment.size, cap: config.discord.text.maxBytes },
+        'Discord text attachment over the byte cap — ignored without fetching',
+      );
+      return renderTextAttachmentRefusal('too-large', name);
+    }
+    try {
+      const body = await this.fetchTextAttachment(attachment.url);
+      return renderTextAttachment(body, name);
+    } catch (err) {
+      logger.warn({ err }, 'Discord text-attachment fetch failed — reporting it unread');
+      return renderTextAttachmentRefusal('fetch-failed', name);
+    }
+  }
+
+  /**
+   * Download the text attachment's bytes over HTTPS and decode them as UTF-8.
+   * Split out from the gate above as the single seam that touches the network,
+   * exactly like `fetchImageAttachment` — overridden in tests so the gate can
+   * be exercised without a real fetch. A bare `fetch` on the CDN URL Discord
+   * itself minted, matching both sibling media paths; `util/safeFetch.ts`
+   * guards CALLER-composed URLs, which this is not.
+   */
+  private async fetchTextAttachment(url: string): Promise<string> {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch Discord text attachment (status ${response.status})`);
+    }
+    return await response.text();
   }
 
   /**

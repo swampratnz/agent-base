@@ -157,6 +157,27 @@ registration and **fails closed**: an unregistered provenance value is
 quarantined. A predicate that treats unknown values as trusted is the same bug
 with better manners.
 
+### 6b. Attached files are quarantined, and a refusal is never silent
+
+An uploaded text file (`media/textAttachment.ts`, off unless
+`TEXT_INPUT_ENABLED`, `super_admin` by default) renders inside the same
+untrusted framing recall gets: angle brackets stripped so the body cannot forge
+or close its wrapper, control characters that fake terminal or log structure
+removed, a length cap, and a wrapper naming it data. It is folded into
+`IncomingMessage.text` rather than carried beside it, so — unlike the image
+path — an attachment's contents are read by `moderator.scan` and persisted with
+the interaction exactly like typed text.
+
+The second half is the part worth stating as an invariant, because it is what
+the feature was built to fix rather than a property it happens to have. Discord
+truncates a long message into an auto-generated `message.txt`; an agent that
+drops that attachment does not merely lack the text, it **cannot tell it lacks
+the text**, and answers a fragment as though the message were whole. So every
+refusal after the tier check — wrong type, over cap, at the daily limit, failed
+download — returns a visible marker into the turn. Only the two checks that
+must not advertise themselves (feature disabled, sender below tier) stay
+silent, and neither reaches a fetch.
+
 ### 7. Fixed router spine
 
 `PRE_TURN_SPINE`, in full, because the positions are the invariant:

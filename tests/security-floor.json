@@ -24,6 +24,7 @@
   "secrets.test.ts": 8,
   "securityFloorGate.test.ts": 8,
   "storageLifecycle.test.ts": 1,
+  "textAttachment.test.ts": 4,
   "whatsappCloudWire.test.ts": 8,
   "whatsappLidMap.test.ts": 2,
   "whatsappWire.test.ts": 1

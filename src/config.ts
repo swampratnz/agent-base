@@ -120,6 +120,12 @@ function buildConfig(env: ParsedEnv) {
         maxBytes: env.IMAGE_INPUT_MAX_BYTES,
         dailyLimitPerUser: env.IMAGE_INPUT_DAILY_LIMIT_PER_USER,
       },
+      text: {
+        enabled: env.TEXT_INPUT_ENABLED ?? false,
+        minRole: env.TEXT_INPUT_MIN_ROLE,
+        maxBytes: env.TEXT_INPUT_MAX_BYTES,
+        dailyLimitPerUser: env.TEXT_INPUT_DAILY_LIMIT_PER_USER,
+      },
     },
     moderation: {
       enabled: env.DISCORD_MODERATION_ENABLED ?? false,
