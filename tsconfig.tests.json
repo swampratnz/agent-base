@@ -87,6 +87,8 @@
     "tests/secrets.test.ts",
     "tests/securityFloorGate.test.ts",
     "tests/storageLifecycle.test.ts",
+    "tests/templateManifest.test.ts",
+    "tests/templateUpgrade.test.ts",
     "tests/textAttachment.test.ts",
     "tests/textChunk.test.ts",
     "tests/voiceTranscribe.test.ts",

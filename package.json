@@ -47,6 +47,8 @@
     "test:security:fix": "node scripts/check-security-test-count.mjs --write",
     "context:check": "node scripts/check-context-pack.mjs",
     "context:fix": "node scripts/check-context-pack.mjs --write",
+    "template:check": "node scripts/check-template-manifest.mjs",
+    "template:fix": "node scripts/check-template-manifest.mjs --write",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

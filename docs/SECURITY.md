@@ -287,6 +287,20 @@ extend them. The **model-facing** enums and the **database** CHECK constraints
 stay closed. Opening a type for composition must not open an input the model can
 drive.
 
+### 12. Advisory signals are bounded
+
+Any soft or derived signal that sits near an enforcement point — a moderation
+score, a heuristic classifier, an ack-classification, anything model- or
+ML-derived a module supplies in the future — gets **bounded influence or
+veto-only authority**. It may add friction, lower a rank, or refuse; it never
+*flips* a hard decision: not a CONFIRM, not a tier derivation, not the outbound
+filter, not a registry's fail-closed default. The rule exists because a signal
+that can upgrade a decision is a signal an attacker (or an overconfident model)
+can aim; a signal that can only degrade or veto fails in the safe direction.
+When a future contract lets a module register a scoring hook, the mechanism
+that consumes it must clamp it to this shape — the same reasoning that keeps
+tier lists derived rather than supplied.
+
 ---
 
 ## 3 · The development pipeline's threat model
