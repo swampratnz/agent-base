@@ -84,6 +84,9 @@ import type { RuntimeSecretGetter } from './agent/secrets.js';
 import { registerRuntimeSecret } from './agent/secrets.js';
 import type { ModuleMigrationFragment } from './storage/migrate.js';
 import { migrate } from './storage/migrate.js';
+import type { FleetHeartbeat, FleetHeartbeatDeps } from './fleet/heartbeat.js';
+import { startFleetHeartbeat } from './fleet/heartbeat.js';
+import { pool } from './storage/db.js';
 import { logger } from './logger.js';
 
 /**
@@ -170,6 +173,14 @@ export interface CreateAgentOptions {
    * deployment migrates out-of-band (a release step, a canary job).
    */
   migrateOnStart?: boolean;
+  /**
+   * Seam for the bosun fleet reporter, for tests. Production passes nothing:
+   * the reporter reads `process.env` and the shared pool, and stays inert
+   * unless a supervisor is configured. A test supplies a fake env and a fake
+   * `db`/`fetchImpl` so `start()` can be exercised with neither a supervisor
+   * nor a database.
+   */
+  fleet?: { env?: NodeJS.ProcessEnv; deps?: Partial<FleetHeartbeatDeps> };
 }
 
 export interface Agent {
@@ -189,6 +200,13 @@ export interface Agent {
    * boot finishes gets a loud failure, not a half-registered turn.
    */
   assertStarted(): void;
+  /**
+   * The bosun fleet reporter, after `start()`: a live reporter when this
+   * process runs under a supervisor, and `null` otherwise — which is the
+   * normal case and the value before `start()` has run. Exposed so a shutdown
+   * path can stop it; nothing has to, because its timer is unref'd.
+   */
+  readonly fleetHeartbeat: FleetHeartbeat | null;
 }
 
 /** One required registry: which manifest field claims it, how to probe it. */
@@ -407,18 +425,38 @@ export async function createAgent(options: CreateAgentOptions): Promise<Agent> {
   //      when the process actually goes live.
   const fragments = modules.flatMap((mod) => mod.migrations ?? []);
   let started = false;
+  let fleetHeartbeat: FleetHeartbeat | null = null;
 
   const agent: Agent = {
     modules: Object.freeze([...names]),
     get started() {
       return started;
     },
+    get fleetHeartbeat() {
+      return fleetHeartbeat;
+    },
     async start(run?: () => Promise<void> | void) {
       if (started) throw new Error('createAgent: agent already started');
       if (options.migrateOnStart !== false) await migrate(fragments);
       await run?.();
       started = true;
-      logger.info({ modules: names }, 'Agent started');
+      // AFTER the agent is live, and last: a supervisor reporting to is an
+      // observability concern, so nothing about it may decide whether this
+      // process serves traffic. Registering earlier would also tell bosun the
+      // agent is up while its adapters were still connecting.
+      //
+      // Base starts this rather than each module, deliberately. Forgetting it
+      // is silent — the agent runs perfectly and its daily spend reads zero,
+      // so bosun's budget caps bind against nothing — and 'silent when wrong'
+      // is exactly the shape base is supposed to own. It costs nothing when
+      // unused: with no FLEET_AGENT_ID/FLEET_AGENT_TYPE/FLEET_SUPERVISOR_URL
+      // in the environment it does not even query.
+      fleetHeartbeat = startFleetHeartbeat(options.fleet?.env ?? process.env, {
+        db: pool,
+        log: (message, err) => logger.warn({ err }, message),
+        ...(options.fleet?.deps ?? {}),
+      });
+      logger.info({ modules: names, fleet: fleetHeartbeat !== null }, 'Agent started');
     },
     assertStarted() {
       if (!started) {

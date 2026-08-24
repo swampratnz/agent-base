@@ -227,6 +227,11 @@ test('a complete composition registers everything, appends intercepts after the 
   assert.deepEqual(ordering, ['init', 'run']);
   agent.assertStarted();
 
+  // An agent outside a bosun fleet gets exactly the behaviour it had before
+  // the reporter existed: no supervisor configured, so nothing is started and
+  // nothing is queried. `tests/createAgentFleet.test.ts` has the other half.
+  assert.equal(agent.fleetHeartbeat, null);
+
   await assert.rejects(agent.start(), /already started/);
 });
 
