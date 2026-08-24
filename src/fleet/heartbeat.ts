@@ -43,6 +43,16 @@ export interface FleetHeartbeatConfig {
   intervalMs: number;
   /** Per-request timeout. A supervisor that is down must not wedge the agent. */
   timeoutMs: number;
+  /**
+   * Bearer token for bosun's agent API, from `FLEET_SUPERVISOR_TOKEN`.
+   *
+   * Optional, because it depends on WHERE the supervisor is. bosun's operator
+   * API is loopback-only and unauthenticated — an agent on the same box needs
+   * no token. Its agent API, the one a resident agent on another box reaches,
+   * serves two routes on a named address behind a per-type token. So: same
+   * box, no token; another box, token required.
+   */
+  token?: string;
 }
 
 /**
@@ -61,6 +71,7 @@ export function readFleetHeartbeatConfig(env: NodeJS.ProcessEnv): FleetHeartbeat
   const supervisorUrl = env.FLEET_SUPERVISOR_URL;
   if (!agentId || !agentType || !supervisorUrl) return undefined;
 
+  const token = env.FLEET_SUPERVISOR_TOKEN?.trim();
   const seconds = Number(env.FLEET_HEARTBEAT_SECONDS ?? 30);
   const intervalMs = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 30_000;
   return {
@@ -68,6 +79,7 @@ export function readFleetHeartbeatConfig(env: NodeJS.ProcessEnv): FleetHeartbeat
     agentType,
     supervisorUrl: supervisorUrl.replace(/\/$/, ''),
     intervalMs,
+    ...(token ? { token } : {}),
     // Comfortably inside the interval: a request still in flight when the next
     // tick fires would stack up against a wedged supervisor.
     timeoutMs: Math.max(2_000, Math.min(10_000, Math.floor(intervalMs / 3))),
@@ -152,10 +164,25 @@ export class FleetHeartbeat {
     try {
       const res = await this.fetchImpl(`${this.cfg.supervisorUrl}${path}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          ...(this.cfg.token ? { authorization: `Bearer ${this.cfg.token}` } : {}),
+        },
         body: JSON.stringify(body),
         signal: ac.signal,
       });
+      // A refusal is logged, not swallowed. Everything about this module is
+      // built so a supervisor problem cannot become an agent problem — which
+      // makes a silent 401 the dangerous case: the agent runs perfectly, the
+      // spend reads zero, and nothing anywhere says why. 401 gets its own
+      // line because its cause is always the same two things.
+      if (!res.ok) {
+        this.log(
+          res.status === 401
+            ? `fleet heartbeat: ${path} refused (401) — check FLEET_SUPERVISOR_TOKEN matches this type's agentTokenRef on the supervisor`
+            : `fleet heartbeat: ${path} refused (${res.status})`,
+        );
+      }
       return res.ok;
     } catch (err) {
       this.log(`fleet heartbeat: ${path} failed`, err);
