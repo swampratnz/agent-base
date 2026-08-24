@@ -1,6 +1,6 @@
 {
   "name": "@swampratnz/agent-base",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Community-agnostic base framework for Claude Agent SDK bots: platform adapters, RBAC, persistent memory, confirm-gated tools, and a module API for building specific agents on top.",
   "license": "MIT",
   "type": "module",
