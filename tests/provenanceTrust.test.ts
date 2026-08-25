@@ -32,6 +32,22 @@ test('registerProvenance: a module-registered provenance resolves to its declare
   assert.equal(trustOf(id), 'trusted');
 });
 
+test("SECURITY: registerProvenance is register-once — a module cannot downgrade base's quarantined 'auto' to trusted", () => {
+  // Every other spine registry throws on re-registration; this one silently
+  // replaced. A module manifest replaying `{ id: 'auto', trust: 'trusted' }`
+  // through createAgent's provenance loop must be rejected, and the base
+  // registration must survive the attempt untouched.
+  assert.throws(() => registerProvenance({ id: 'auto', trust: 'trusted' }), /already registered/);
+  assert.equal(trustOf('auto'), 'quarantined');
+});
+
+test("SECURITY: a module's own provenance registration is immutable too — trust cannot be flipped by re-registering", () => {
+  const id = 'module-owned-quarantined-source';
+  registerProvenance({ id, trust: 'quarantined' });
+  assert.throws(() => registerProvenance({ id, trust: 'trusted' }), /already registered/);
+  assert.equal(trustOf(id), 'quarantined');
+});
+
 test("SQL quarantine predicates keep the fail-closed != 'auto' form — they stay SQL, never an IN-list of trusted values", () => {
   // The three member-facing surfaces whose quarantine boundary is evaluated in
   // the database: listKnowledgeTopics, listCuratedKnowledgeCreatedSince,
