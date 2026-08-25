@@ -47,6 +47,13 @@ export function runtimeSecrets(): string[] {
     // future/unknown egress path, not just the one send site that redacts it
     // today (audit M2).
     config.github.token ?? '',
+    // The bosun fleet-supervisor bearer token (fleet/heartbeat.ts). Read
+    // straight from the environment because that is where the heartbeat reads
+    // it — no config slice exists for the fleet vars — and re-read per call
+    // like everything else here. docs/SECURITY.md §1's rule is that every
+    // base credential joins this list in the diff that introduces it; this
+    // one shipped without it (audit S6).
+    process.env.FLEET_SUPERVISOR_TOKEN ?? '',
     ...registered.map((getter) => getter() ?? ''),
   ];
 }

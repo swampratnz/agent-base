@@ -3,9 +3,10 @@ import type { PlatformAdapter } from '../platforms/types.js';
 
 // The base job-runner MECHANISM (agent-base plan §Phase-2 Stage 3a): the
 // generic start/stop sweeps over whatever spec list the composition root
-// passes in. The community job list itself — and its pinned order — lives in
-// `registry.ts` (JOB_REGISTRY), which this file deliberately never imports:
-// `src/index.ts` composes `startRegisteredJobs(JOB_REGISTRY, adapters)`.
+// passes in. The job list itself — and its pinned order — is the CONSUMER's
+// (community-agent's JOB_REGISTRY), which this file deliberately never sees:
+// a deployment composes `startRegisteredJobs(itsOwnList, adapters)` from the
+// callback it hands `agent.start()`.
 
 export interface StartedJob {
   name: string;
@@ -14,12 +15,14 @@ export interface StartedJob {
 }
 
 /**
- * Starts every job in `specs`, in list order (registry order, for the
- * JOB_REGISTRY list index.ts passes). Deliberately does NOT consult
- * `spec.enabled()` — every starter self-gates internally exactly as it did
- * before the registry existed, so a drifted declarative gate could mislabel
- * a job but never start or suppress one (`enabled` is pinned against the
- * real gates by `tests/jobsRegistry.test.ts`).
+ * Starts every job in `specs`, in list order (the consumer's registry order).
+ * Deliberately does NOT consult `spec.enabled()` — every starter self-gates
+ * internally exactly as it did before the registry existed, so a drifted
+ * declarative gate could mislabel a job but never start or suppress one.
+ * That the runner never reads `enabled` is pinned here by
+ * `tests/jobsRegistry.test.ts`; that each real job's `enabled` mirrors its
+ * starter's actual gate is the consumer's registry test to pin, against its
+ * own job list.
  */
 export function startRegisteredJobs(
   specs: readonly JobSpec[],

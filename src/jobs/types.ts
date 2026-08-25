@@ -31,11 +31,13 @@ export interface JobSpec {
   name: string;
   /**
    * Declarative form of the gate `start()` already enforces internally.
-   * The registry does NOT consult it at startup (the starters self-gate,
+   * The runner does NOT consult it at startup (the starters self-gate,
    * byte-for-byte as before the registry existed); it exists so the gate is
-   * inspectable/testable without starting timers, and it is pinned against
-   * the starter's own behaviour by `tests/jobsRegistry.test.ts` +
-   * `tests/backgroundJobsDisabled.test.ts`.
+   * inspectable/testable without starting timers. That the runner ignores it
+   * is pinned by `tests/jobsRegistry.test.ts` here; that each real job's
+   * `enabled` mirrors its starter's actual gate is pinned in the CONSUMER's
+   * suite, against its own job list — base's retention jobs are pinned in
+   * the same file here.
    */
   enabled(cfg: Config): boolean;
   /** Starts the job (or returns `null` when its own gate is off). */

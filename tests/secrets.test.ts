@@ -19,9 +19,23 @@ process.env.DEV_TEAM_AUTH_TOKEN ??= 'test-dev-team-token';
 // credential. Set it WITHOUT GITHUB_ISSUE_ENABLED (the refine only requires a
 // token when enabled) — runtimeSecrets() must cover it regardless (audit M2).
 process.env.GITHUB_ISSUE_TOKEN ??= 'github_pat_testtoken0123456789abcdef';
+// The bosun fleet-supervisor bearer token (fleet/heartbeat.ts) is a base
+// credential too. Set WITHOUT the FLEET_AGENT_* identity vars — the heartbeat
+// stays inert, but runtimeSecrets() must cover the token regardless (audit S6).
+process.env.FLEET_SUPERVISOR_TOKEN ??= 'test-fleet-supervisor-token';
 
 const { runtimeSecrets, registerRuntimeSecret } = await import('../src/agent/secrets.js');
 const { filterOutbound } = await import('../src/agent/outbound.js');
+
+test('SECURITY: runtimeSecrets() includes the fleet-supervisor bearer token, and filterOutbound redacts it (audit S6)', () => {
+  const secrets = runtimeSecrets();
+  assert.ok(
+    secrets.includes('test-fleet-supervisor-token'),
+    'the bosun heartbeat bearer token must be covered by the exact-value redaction backstop',
+  );
+  const out = filterOutbound('the token is test-fleet-supervisor-token, do not repeat it', 'full', secrets);
+  assert.ok(!out.includes('test-fleet-supervisor-token'), 'an outbound leak of the token must be redacted');
+});
 
 test('SECURITY: runtimeSecrets() includes the WhatsApp Cloud app secret', () => {
   const secrets = runtimeSecrets();

@@ -27,12 +27,13 @@ agent, a personal finance agent, …) plug in as **modules**.
 ## Status: published, with one consumer
 
 [`@swampratnz/agent-base`](https://www.npmjs.com/package/@swampratnz/agent-base)
-is on public npm — `0.3.0` is `latest`, published by trusted publishing with a
-provenance attestation — and `community-agent` consumes it: it has no
-`src/base/` of its own any more.
+is on public npm — every release published by trusted publishing with a
+provenance attestation (the npm badge above always shows the current
+version) — and `community-agent` consumes it: it has no `src/base/` of its
+own any more.
 
-Both `0.2.0` and `0.3.0` are **breaking** releases, which under `0.x` are minor
-bumps (see [docs/ROADMAP.md](docs/ROADMAP.md)'s contract-stability note):
+Two earlier releases were **breaking**, which under `0.x` ship as minor bumps
+(see [docs/ROADMAP.md](docs/ROADMAP.md)'s contract-stability note):
 
 - **`0.3.0`** moved `@whiskeysockets/baileys` from a dependency to an
   **optional peer**, so the framework installs on npm 12. If you use the
@@ -45,7 +46,7 @@ bumps (see [docs/ROADMAP.md](docs/ROADMAP.md)'s contract-stability note):
 |---|---|
 | `src/` | the **runtime**: agent kernel and prompt spine, platform adapters, storage + 26 SQL fragments, the router spine, jobs, auth, config, notices |
 | `src/createAgent.ts` | the **composition entry point**: `createAgent({ modules })`, and the registration order it owns |
-| `tests/` | the suite that came across with the code, including the 199 `SECURITY:` cases across 26 files that the floor gate counts |
+| `tests/` | the suite that came across with the code, including every `SECURITY:` case the floor gate counts (`tests/security-floor.json` is the authoritative tally) |
 | `scripts/` | the **gates** — the security-test floor and the context-pack freshness check, generalised to multi-root layouts |
 | `.github/workflows/` | CI running the full gate set, the tag-triggered publish, a **canary** that builds community-agent against this commit, and a **consumption** suite that installs the real tarball the way a stranger would |
 | `docs/VISION.md` | what this is for, what it must never become, and how we would know it worked |

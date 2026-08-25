@@ -22,10 +22,18 @@ export type ToolResult = Awaited<ReturnType<SdkMcpToolDefinition['handler']>>;
  * `makeToolContext` (context.ts); handlers destructure only the names they
  * actually use.
  *
- * Security-critical properties live here in exactly one place:
- * `requireConfirm`'s forgeable-pending-notice sanitize strip and `audited`'s
- * "audit row + 'system'-priority super-admin alert" pairing are received via
- * this context, so a domain file cannot re-implement either wrongly.
+ * The security-critical properties are received via this context so a
+ * DOMAIN file cannot re-implement them wrongly — but note what this package
+ * ships: the TYPE only. `requireConfirm`'s forgeable-pending-notice sanitize
+ * strip, `audited`'s "audit row + 'system'-priority super-admin alert"
+ * pairing and `callerScope`'s adapter-verified conversation list are all
+ * implemented by the CONSUMER's `makeContext` — its tool-context factory,
+ * wherever it keeps one — while base owns the primitives they compose
+ * (pendingActions.ts, adminAudit.ts, notifications.ts) and this contract,
+ * not the composition. Shipping a base `makeBaseToolContext` so the
+ * enforcement is one place per FRAMEWORK rather than per consumer is the
+ * open fix (audit S2); docs/SECURITY.md marks invariants 3/5/9 partial for
+ * exactly this reason.
  */
 export interface ToolContext {
   caller: CallerContext;

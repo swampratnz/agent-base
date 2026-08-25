@@ -97,7 +97,8 @@ export function startAccessRequestRetentionPurge(
 
 // Registry entries (composed into the deployment's own job registry). Each `enabled` mirrors the
 // `days > 0` gate startRetentionJob already passes to startTrackedJob —
-// declarative metadata only, pinned by tests/jobsRegistry.test.ts.
+// declarative metadata only; tests/jobsRegistry.test.ts pins each mirror
+// against a synthetic config, and pins that the runner never consults it.
 export const interactionRetentionPurgeJob: JobSpec = {
   name: 'interaction-retention-purge',
   enabled: (cfg) => cfg.behaviour.interactionRetentionDays > 0,
