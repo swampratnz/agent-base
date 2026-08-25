@@ -1,7 +1,12 @@
-import type { Client, Interaction } from 'discord.js';
+import { MessageFlags, type Client, type Interaction } from 'discord.js';
 import { config } from '../../config.js';
 import { logger } from '../../logger.js';
 import { registeredCommands, type SlashCommandDeps } from '../../commands/registry.js';
+import { resolveRole } from '../../auth/roles.js';
+import type { Tier } from '../../auth/tiers.js';
+import { isUserBlocked } from '../../storage/repository.js';
+import { isPaused } from '../../storage/policyStore.js';
+import { notice } from '../../strings/catalogue.js';
 
 /**
  * The Discord slash-command MECHANISM (agent-base plan §Phase-2 Stage 4):
@@ -63,10 +68,86 @@ export async function registerSlashCommands(client: Client): Promise<void> {
   }
 }
 
-/** Route a chat-input interaction to its registry entry's bound handler; ignore anything else. */
-export async function handleInteraction(interaction: Interaction, deps: SlashCommandDeps): Promise<void> {
+/**
+ * SECURITY: the reads the dispatch gates below run against — injectable so the
+ * gates are testable without a database, defaulting to the same functions the
+ * router's spine steps call. Production callers never pass this.
+ */
+export interface SlashDispatchGates {
+  isUserBlockedFn: typeof isUserBlocked;
+  isPausedFn: typeof isPaused;
+  resolveRoleFn: typeof resolveRole;
+}
+
+const productionGates: SlashDispatchGates = {
+  isUserBlockedFn: isUserBlocked,
+  isPausedFn: isPaused,
+  resolveRoleFn: resolveRole,
+};
+
+/**
+ * Route a chat-input interaction to its registry entry's bound handler;
+ * ignore anything else.
+ *
+ * SECURITY: a slash interaction never passes through `Router.handle()`, so
+ * the router's pre-turn spine cannot gate it — this dispatcher mirrors the
+ * spine's leading steps itself, in the spine's order, so the gates are base's
+ * and a module handler cannot forget them (audit S5):
+ *
+ *  - **block-list** first, silently: a blocked caller gets zero footprint —
+ *    no reply, no dispatch — matching `blockListStep`'s zero-footprint rule.
+ *    Fails OPEN on a read error (log and dispatch), the same posture as the
+ *    router's catch: one failed check must never itself become an outage.
+ *  - **role resolution** next, failing CLOSED to `guest`, and the resolved
+ *    tier rides into the handler on `deps.caller` — never re-derived (or
+ *    forgotten) by the handler itself.
+ *  - **pause** last, exempting super admins exactly as `pauseStep` does (so
+ *    they can resume), with an ephemeral notice through `deps.filtered` —
+ *    ephemeral, so a pause is not broadcast to the channel, and no debounce,
+ *    because an explicit slash invocation is not a busy channel's spray.
+ *
+ * Rate-limit and daily-budget are deliberately NOT mirrored: both exist to
+ * bound model-turn cost, and a slash command never starts a model turn. If a
+ * command ever grows one, it takes the whole spine, not a wider copy here.
+ */
+export async function handleInteraction(
+  interaction: Interaction,
+  deps: Omit<SlashCommandDeps, 'caller'>,
+  gates: SlashDispatchGates = productionGates,
+): Promise<void> {
   if (!interaction.isChatInputCommand()) return;
   const command = registeredCommands().find((c) => c.name === interaction.commandName);
   if (!command?.discord) return;
-  await command.discord.handle(interaction, deps);
+
+  try {
+    if (await gates.isUserBlockedFn('discord', interaction.user.id)) return;
+  } catch (err) {
+    logger.error({ err }, 'Slash block-list check failed; treating caller as not blocked');
+  }
+
+  let role: Tier;
+  try {
+    role = await gates.resolveRoleFn('discord', interaction.user.id);
+  } catch (err) {
+    logger.error({ err }, 'Slash role resolution failed; treating caller as guest');
+    role = 'guest';
+  }
+
+  if (role !== 'super_admin' && (await gates.isPausedFn().catch(() => false))) {
+    try {
+      await interaction.reply({
+        content: await deps.filtered(notice('pauseNotice')),
+        flags: MessageFlags.Ephemeral,
+      });
+    } catch (err) {
+      // A failed notice must not un-pause the gate — the dispatch stays refused.
+      logger.warn({ err }, 'Slash pause notice failed to send');
+    }
+    return;
+  }
+
+  await command.discord.handle(interaction, {
+    ...deps,
+    caller: { userId: interaction.user.id, role },
+  });
 }

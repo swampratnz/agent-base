@@ -62,13 +62,22 @@ export interface WhatsAppTextCommandDeps {
 
 /**
  * The narrow slice of the Discord adapter a slash-command handler depends
- * on — just the outbound filter (secret redaction + code policy), so every
+ * on — the outbound filter (secret redaction + code policy), so every
  * slash-command reply gets exactly the same DLP treatment as every other
  * outbound path (adapter.ts's `filtered()`) without a handler needing the
- * whole adapter class (issue #744 review point 1).
+ * whole adapter class (issue #744 review point 1) — plus the verified caller.
  */
 export interface SlashCommandDeps {
   filtered: (text: string) => Promise<string>;
+  /**
+   * The caller's platform identity and RESOLVED tier, supplied by the
+   * dispatcher (`handleInteraction`) after it has run the block-list and
+   * pause gates — never by a handler's own reading of the interaction. The
+   * WhatsApp `!` text-command path has always received the resolved role from
+   * the router's spine; this is the Discord surface's equivalent, so a
+   * handler cannot forget role resolution because it never performs it.
+   */
+  caller: { userId: string; role: Tier };
 }
 
 /**

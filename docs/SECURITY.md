@@ -111,8 +111,16 @@ The CONFIRM/CANCEL tokens are base-owned protocol literals. Modules cannot
 translate or restyle them: a localisable confirmation token is a confusable
 confirmation token.
 
-The pending-action description is sanitized in exactly one place, so a tool
-cannot forge a pending-action notice.
+**Partial — the sanitize half is the module's.** Base owns the pending-action
+store (`agent/pendingActions.ts`), the deterministic confirm intercept, and the
+router's authoritative pending notice (rendered by the router itself, never
+from a tool's text). The description-sanitizing `requireConfirm` helper is
+declared on the `ToolContext` type but implemented by the module's
+`makeContext` (see MODULE-API.md § The tool context) — so "sanitized in
+exactly one place" is one place *per consumer*, enforced by that consumer's
+own suite, not by this package. Until base ships the helper, a module that
+implements it wrongly weakens its own pending notices; the intercept, the
+tier re-resolution and the router-rendered notice above remain base's.
 
 ### 4. Outbound filtering
 
@@ -146,8 +154,16 @@ rather than letting it out unredacted. See §1 and MODULE-API.md
 
 Admin-facing data access is scoped **in SQL** to conversations the admin
 actually participates in, verified against the platform rather than asserted.
-The tool kernel exposes the caller's scope and module queries must use it.
 Scoping in the query, not in a post-filter, is what makes it a boundary.
+
+**Partial — the scope supplier is the module's.** Base owns the scoped
+queries themselves (every repository reader takes a conversation-id list and
+scopes in SQL; `repository.test.ts` pins them), but the `callerScope()`
+helper on `ToolContext` is a *type*: the implementation that derives the
+list from `adapter.conversationsForUser` lives in the module's `makeContext`,
+and the scope parameters on the readers are optional — an omitted scope reads
+unscoped rather than failing. A module that supplies a wrong or null scope
+widens its own tools' reach; base's own callers always pass one.
 
 ### 6. Quarantined recall
 
@@ -267,6 +283,15 @@ the call lands in the audit log.
 Privileged mutations go through the kernel's audit helper: an audit row plus a
 super-admin echo, paired in one place so a domain file cannot implement half of
 it.
+
+**Partial — the pairing is the module's.** Base ships the two halves as
+independent primitives — `recordAdminAction` (`storage/repository/
+adminAudit.ts`) and `alertSuperAdmins` (`notifications.ts`) — and declares the
+paired `audited` helper on the `ToolContext` type; the implementation that
+actually pairs them is the module's `makeContext`. "One place" is therefore
+one place per consumer: a module could write the row and skip the echo and
+nothing in this package would notice. Shipping the pairing in base is the
+open fix (audit S2).
 
 **Planned:** an `auditActionKinds` declaration per module. It exists only on
 the v0 contract type and nothing reads it; the allowlist the audit views filter
