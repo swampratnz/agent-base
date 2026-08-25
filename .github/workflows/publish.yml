@@ -141,9 +141,13 @@ jobs:
       # persist-credentials:false for the same reason as ci.yml: no step after
       # checkout needs a git credential, and this job runs npm lifecycle
       # scripts, so the job token must not sit readable in .git/config.
+      # fetch-depth:0 because the preflight's tag-ancestry check needs the
+      # history between the tagged commit and origin/main; a depth-1 clone
+      # cannot answer `merge-base --is-ancestor`.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -306,6 +310,23 @@ jobs:
               fail "Tag '${REF_NAME}' does not match package.json version '${version}' (expected tag 'v${version}'). Fix one of the two and re-tag — do not publish a mismatch."
             fi
             echo "tag ${REF_NAME} matches package.json version ${version}"
+
+            # A version tag alone is not adjudication: everything above proves
+            # only that the tag NAMES the version, not that the commit it
+            # points at ever passed a PR. Publishing is immutable and carries
+            # a provenance attestation naming this repository, so require the
+            # tagged commit to be reachable from main — the ref whose
+            # protection rules are where adjudication actually lives. This is
+            # the in-workflow backstop; the enforceable control is a tag
+            # ruleset on v* restricting who may create release tags (see
+            # docs/RELEASING.md). The fetch is unauthenticated on purpose
+            # (persist-credentials is false) — trusted publishing already
+            # requires this repository to stay public.
+            git fetch --no-tags --quiet origin main
+            if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+              fail "Tag '${REF_NAME}' points at a commit that is not reachable from origin/main. A release tag must name an adjudicated commit that is already on main — merge first, then tag. An off-main release is an owner decision, not a workflow default."
+            fi
+            echo "tagged commit is reachable from origin/main"
           elif [ "${dry_run}" != "true" ]; then
             # Guards a manual dry_run:false launched from a branch, which would
             # publish an untagged tree under whatever version happens to be in

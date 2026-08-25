@@ -29,6 +29,17 @@ export type ProvenanceTrust = 'quarantined' | 'trusted';
 const registry = new Map<string, ProvenanceTrust>();
 
 export function registerProvenance(reg: { id: string; trust: ProvenanceTrust }): void {
+  // Register-once, like every other registry on the security spine: a bare
+  // Map.set here let a later registration silently REPLACE an earlier one, so
+  // a module manifest carrying `{ id: 'auto', trust: 'trusted' }` would flip
+  // unreviewed web-research content from quarantined to trusted rendering
+  // with no error and no log. A trust change is a code change to the
+  // registration that owns the id, never a second registration.
+  if (registry.has(reg.id)) {
+    throw new Error(
+      `provenance '${reg.id}' already registered — a trust level cannot be re-registered, only changed at its owning registration`,
+    );
+  }
   registry.set(reg.id, reg.trust);
 }
 
