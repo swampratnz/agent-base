@@ -1,6 +1,6 @@
 {
   "backgroundJobHealth.test.ts": 1,
-  "builtinToolArming.test.ts": 4,
+  "builtinToolArming.test.ts": 6,
   "configSlices.test.ts": 2,
   "createAgent.test.ts": 2,
   "failClosedMessages.test.ts": 1,

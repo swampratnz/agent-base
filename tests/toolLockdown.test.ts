@@ -16,7 +16,8 @@ process.env.DATABASE_URL ??= 'postgres://test:test@127.0.0.1:5432/test';
 const { registerToolTiers } = await import('../src/auth/rbac.js');
 const { registerFlaggedToolPredicates } = await import('../src/agent/featureFlags.js');
 const { buildQueryOptions } = await import('../src/agent/core.js');
-const { ALL_BUILTIN_TOOLS, MUTATING_BUILTIN_TOOLS } = await import('../src/agent/builtinTools.js');
+const { ALL_BUILTIN_TOOLS, MUTATING_BUILTIN_TOOLS, armMutatingTools, resetArmingsForTest } =
+  await import('../src/agent/builtinTools.js');
 
 const TIERS = ['guest', 'member', 'admin', 'super_admin'] as const;
 
@@ -38,8 +39,11 @@ function optionsFor(role: (typeof TIERS)[number]) {
   return buildQueryOptions(role, 'system prompt', {}, null, 'conv-1', 'discord');
 }
 
-test('SECURITY: WebFetch and Task stay disallowed for every tier BELOW super admin — URL construction is an exfiltration channel and fetched pages an injection vector', () => {
-  for (const role of ['guest', 'member', 'admin'] as const) {
+test('SECURITY: WebFetch and Task are disallowed for EVERY tier by default — URL construction is an exfiltration channel and fetched pages an injection vector', () => {
+  // Restored to all four tiers: the full surface is now granted only inside an
+  // ARMED window (buildQueryOptions' `fullBuiltins`), and `optionsFor` passes
+  // no actor id, so a super-admin turn here is an UNARMED one.
+  for (const role of TIERS) {
     const opts = optionsFor(role);
     assert.ok(opts.disallowedTools.includes('WebFetch'), `WebFetch must be disallowed for ${role}`);
     assert.ok(opts.disallowedTools.includes('Task'), `Task must be disallowed for ${role}`);
@@ -47,33 +51,44 @@ test('SECURITY: WebFetch and Task stay disallowed for every tier BELOW super adm
   }
 });
 
-test('SECURITY: the full built-in surface is super-admin ONLY, and its mutating half is gated by the arming hook', () => {
+test('SECURITY: an UNARMED super-admin turn is granted NO built-in beyond WebSearch — the grant itself is what arming unlocks', () => {
+  // The review correction: gating only Bash/Write/Edit/NotebookEdit left
+  // Read + WebFetch granted and auto-approved in every super-admin turn, a
+  // read-anything-then-send-anywhere pair reachable by injected group text
+  // with no arming. The GRANT is now conditional, so an unarmed super admin
+  // looks exactly like an admin.
   const opts = optionsFor('super_admin');
-  // The owner's decision (community-agent#1405 follow-up): super admins get
-  // every built-in, in every conversation. What keeps that from being a
-  // shell reachable by group-message injection is the arming gate, not a
-  // narrower tool list — so pin BOTH halves here.
-  for (const tool of ALL_BUILTIN_TOOLS) {
-    assert.ok(opts.tools.includes(tool), `${tool} must be granted to a super admin`);
+  assert.deepEqual(opts.tools, ['WebSearch'], 'an unarmed super admin gets exactly [WebSearch]');
+  for (const tool of ALL_BUILTIN_TOOLS.filter((t) => t !== 'WebSearch')) {
+    assert.ok(!opts.tools.includes(tool), `${tool} must not be granted while unarmed`);
+    assert.ok(!opts.allowedTools.includes(tool), `${tool} must not be pre-approved while unarmed`);
   }
-  assert.deepEqual(opts.disallowedTools, [], 'nothing is disallowed for a super admin');
-  const preToolUse = (opts as { hooks?: { PreToolUse?: Array<{ matcher: string }> } }).hooks?.PreToolUse;
-  assert.ok(preToolUse, 'a super-admin turn must carry PreToolUse hooks');
-  const matchers = preToolUse.map((entry) => entry.matcher);
-  assert.ok(
-    matchers.includes(MUTATING_BUILTIN_TOOLS.join('|')),
-    `the mutating built-ins must be gated: matchers were ${JSON.stringify(matchers)}`,
-  );
-  assert.ok(matchers.includes('WebSearch'), 'the WebSearch cap must still be attached');
 });
 
-test('SECURITY: no tier below super admin is granted a mutating built-in, armed or not', () => {
-  for (const role of ['guest', 'member', 'admin'] as const) {
-    const opts = optionsFor(role);
-    for (const tool of MUTATING_BUILTIN_TOOLS) {
-      assert.ok(!opts.tools.includes(tool), `${tool} must never be granted to ${role}`);
-      assert.ok(!opts.allowedTools.includes(tool), `${tool} must never be pre-approved for ${role}`);
+test('SECURITY: no tier can be granted a mutating built-in without an arming, and only a super admin can arm', () => {
+  // Arming is keyed to the actor, and the grant additionally requires the
+  // super_admin tier: an armed actor id on a lower tier grants nothing.
+  armMutatingTools('discord', 'conv-1', 'actor-1');
+  try {
+    for (const role of ['guest', 'member', 'admin'] as const) {
+      const opts = buildQueryOptions(role, 'system prompt', {}, null, 'conv-1', 'discord', 'actor-1');
+      for (const tool of MUTATING_BUILTIN_TOOLS) {
+        assert.ok(!opts.tools.includes(tool), `${tool} must never be granted to ${role}`);
+        assert.ok(!opts.allowedTools.includes(tool), `${tool} must never be pre-approved for ${role}`);
+      }
+      assert.ok(opts.disallowedTools.includes('WebFetch'), `WebFetch stays disallowed for ${role}`);
     }
+    const armed = buildQueryOptions('super_admin', 'system prompt', {}, null, 'conv-1', 'discord', 'actor-1');
+    for (const tool of ALL_BUILTIN_TOOLS) {
+      assert.ok(armed.tools.includes(tool), `${tool} must be granted inside an armed super-admin window`);
+    }
+    const matchers = (
+      armed as { hooks?: { PreToolUse?: Array<{ matcher: string }> } }
+    ).hooks?.PreToolUse?.map((entry) => entry.matcher);
+    assert.ok(matchers?.includes(MUTATING_BUILTIN_TOOLS.join('|')), 'the arming gate must be attached');
+    assert.ok(matchers?.includes('WebSearch'), 'the WebSearch cap must still be attached');
+  } finally {
+    resetArmingsForTest();
   }
 });
 
@@ -93,8 +108,8 @@ test("SECURITY: a member turn's allowedTools never contains an admin- or super-a
   assert.ok(!allowed.includes(SUPER_ADMIN_TOOL), 'a super-admin tool must never reach a member surface');
 });
 
-test('SECURITY: an ADMIN turn gets WebSearch and ONLY WebSearch (skills off) — the full surface stops at super admin', () => {
-  for (const role of ['admin'] as const) {
+test('SECURITY: admin+ built-ins are WebSearch and ONLY WebSearch (skills off), absent an arming', () => {
+  for (const role of ['admin', 'super_admin'] as const) {
     const opts = optionsFor(role);
     assert.deepEqual(opts.tools, ['WebSearch'], `built-ins for ${role} must be exactly [WebSearch]`);
     assert.ok(!opts.disallowedTools.includes('WebSearch'), `WebSearch is granted to ${role}`);

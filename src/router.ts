@@ -1297,7 +1297,12 @@ export class Router {
     const verdict = classifyArmingReply(msg.text);
     if (!verdict || ctx.state.role !== 'super_admin') return 'continue';
     if (verdict === 'disarm') {
-      const wasArmed = disarmMutatingTools(msg.platform, msg.conversationId, msg.userId);
+      const disarmParent = this.autoAnswerThreadParents.get(msg.conversationId)?.parent;
+      const wasArmed =
+        disarmMutatingTools(msg.platform, msg.conversationId, msg.userId) ||
+        (disarmParent !== undefined &&
+          disarmParent !== msg.conversationId &&
+          disarmMutatingTools(msg.platform, disarmParent, msg.userId));
       await this.send(
         adapter,
         msg.conversationId,
@@ -1305,7 +1310,15 @@ export class Router {
       ).catch((err) => logger.error({ err }, 'Failed to send disarm acknowledgement'));
       return 'handled';
     }
+    // Arm the message's own conversation AND, when the message arrived inside
+    // a bot-opened auto-answer thread, its parent channel — the turn that
+    // follows may be keyed to either id. Same both-ids reasoning as the
+    // CONFIRM intercept's parent fallback below (audit M1).
     armMutatingTools(msg.platform, msg.conversationId, msg.userId);
+    const armParent = this.autoAnswerThreadParents.get(msg.conversationId)?.parent;
+    if (armParent && armParent !== msg.conversationId) {
+      armMutatingTools(msg.platform, armParent, msg.userId);
+    }
     logger.warn(
       { platform: msg.platform, conversationId: msg.conversationId },
       'Super-admin armed the mutating built-in tools (Bash/Write/Edit/NotebookEdit)',

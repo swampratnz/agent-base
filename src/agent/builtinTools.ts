@@ -17,12 +17,18 @@ import type { Platform } from '../platforms/types.js';
  * shell is reachable by injection: "run this" in a group, answered inside a
  * super admin's turn, would execute with that super admin's authority.
  *
- * The arming window is the mitigation that keeps the requested surface intact:
- * every built-in is GRANTED, but the mutating four only fire while the actor
- * has armed them with a fresh platform message. Same trust property the
- * CONFIRM flow has (`pendingActions.ts`): the model can ASK to be armed and
- * can never arm itself, because arming is classified in the router before the
- * model runs and is keyed to the actor's own id.
+ * The arming window is the mitigation: the full surface is granted only while
+ * the actor has armed it with a fresh platform message, and an unarmed
+ * super-admin turn carries the pre-change surface (`['WebSearch']`, with
+ * `Task`/`WebFetch` disallowed). Same trust property the CONFIRM flow has
+ * (`pendingActions.ts`): the model can ASK to be armed and can never arm
+ * itself, because arming is classified in the router before the model runs
+ * and is keyed to the actor's own id.
+ *
+ * What the window does NOT bound: consequences. One armed `Bash`/`Write` call
+ * can rewrite the deployed `dist/` or the CLI config dir under the service
+ * account, which survives the window closing, a disarm, and a restart. The
+ * TTL bounds WHEN an injection can strike, not how long the damage lasts.
  *
  * Why an arming WINDOW rather than a confirmation per call: the router
  * serialises work per conversation (`Router.enqueue`), so a turn that blocked
@@ -30,8 +36,17 @@ import type { Platform } from '../platforms/types.js';
  * queued behind itself. A window is the only shape that survives that.
  */
 
-/** Built-ins that only read: safe to auto-approve for a tier that is granted them. */
-export const READ_ONLY_BUILTIN_TOOLS = Object.freeze([
+/**
+ * Built-ins that do not change the host. "Non-mutating" is NOT "safe":
+ * `Read`/`Glob`/`Grep` read anything the service account can read, `WebFetch`
+ * composes its own URL (the base disallows it below super admin for exactly
+ * that reason — it is an egress channel the outbound secret redaction never
+ * sees), and `Task` starts a sub-agent whose prompt can be attacker-chosen
+ * text, equipped with this same set, returning output that looks like a
+ * trusted tool result. So this set is granted only inside an armed window
+ * too — see `ALL_BUILTIN_TOOLS`' note.
+ */
+export const NON_MUTATING_BUILTIN_TOOLS = Object.freeze([
   'Read',
   'Glob',
   'Grep',
@@ -42,15 +57,28 @@ export const READ_ONLY_BUILTIN_TOOLS = Object.freeze([
 ]);
 
 /**
- * Built-ins that change the host (or run arbitrary code on it). Granted to
- * super admins, but gated by the arming window via a `PreToolUse` hook —
- * `allowedTools` pre-approval cannot gate anything, so the hook is the gate
- * (the same reason WebSearch's rate limit is a hook, see core.ts).
+ * Built-ins that change the host (or run arbitrary code on it). A
+ * `PreToolUse` hook re-checks the arming window for these even inside an
+ * armed turn, because the window can expire mid-turn while the options object
+ * was built once at the start (`allowedTools` pre-approval cannot gate
+ * anything, so a hook is the only thing guaranteed to fire — the same reason
+ * WebSearch's rate limit is a hook, see core.ts).
  */
 export const MUTATING_BUILTIN_TOOLS = Object.freeze(['Bash', 'Write', 'Edit', 'NotebookEdit']);
 
-/** The full built-in surface granted to super admins. */
-export const ALL_BUILTIN_TOOLS = Object.freeze([...READ_ONLY_BUILTIN_TOOLS, ...MUTATING_BUILTIN_TOOLS]);
+/**
+ * The full built-in surface, granted ONLY to a super admin inside an armed
+ * window (`core.ts`'s `fullBuiltins`). An unarmed super-admin turn gets the
+ * pre-change surface instead: `['WebSearch']`, with `Task`/`WebFetch`
+ * disallowed, identical to an admin turn.
+ *
+ * Gating the GRANT rather than only the mutating half is the correction that
+ * came out of review: gating only `Bash`/`Write`/`Edit`/`NotebookEdit` left
+ * `Read` + `WebFetch` granted and auto-approved in every super-admin turn,
+ * which is a complete read-anything-then-send-anywhere path reachable by
+ * injected text in a group conversation, with no arming and no audit line.
+ */
+export const ALL_BUILTIN_TOOLS = Object.freeze([...NON_MUTATING_BUILTIN_TOOLS, ...MUTATING_BUILTIN_TOOLS]);
 
 /** How long one arming lasts. Short: an armed window is standing shell access. */
 export const SHELL_ARM_TTL_MS = 5 * 60_000;

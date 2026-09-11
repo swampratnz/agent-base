@@ -302,9 +302,15 @@ export function filterFeatureFlaggedTools(tools: string[]): string[] {
  *
  * `CLAUDE_CODE_OAUTH_TOKEN` deliberately survives: the spawned Claude Code
  * binary authenticates with it (agent/auth.ts), so removing it would break the
- * turn outright. A granted shell can therefore still read the subscription
- * token, and no filtering here changes that — it is stated plainly in
- * docs/SECURITY.md §1 rather than implied away.
+ * turn outright.
+ *
+ * This is defence-in-depth, NOT containment, and review was right to say the
+ * first version of the docs invited over-reading it: the child runs as the
+ * same uid, so an armed shell can read the parent's `/proc/<pid>/environ`
+ * (no `ProcSubset`/`hidepid` on this unit) or simply `cat` the `.env` — both
+ * return every value filtered out here. Values shorter than 8 chars are kept
+ * by design. It raises the cost of an accidental echo; it stops nothing
+ * deliberate.
  */
 function shellSafeEnv(): Record<string, string | undefined> {
   const secrets = new Set(runtimeSecrets().filter((value) => value.length >= 8));
@@ -319,23 +325,32 @@ function shellSafeEnv(): Record<string, string | undefined> {
 }
 
 /**
- * Working directory for a turn granted the built-in file tools. `Read`/
- * `Write`/`Edit` are confined to `cwd` plus `additionalDirectories`, and we
- * pass no additional directories, so the file tools cannot reach the app
- * directory (or its `.env`) at all. `Bash` is NOT confined by this — a shell
- * can `cd` anywhere the service account may read — it is bounded by the unit's
- * own systemd confinement instead.
+ * Default working directory for an armed turn's file tools.
+ *
+ * This is a STARTING directory, not a jail: a bare tool name in
+ * `allowedTools` carries no path predicate, so do not read this as
+ * confinement (an earlier version of docs/SECURITY.md did, wrongly — on this
+ * deployment HOME is `/opt/community-agent/home`, so this directory sits
+ * INSIDE the app directory, two levels from its `.env`). `Bash` is not bound
+ * by it at all; a shell can `cd` anywhere the service account may read.
+ *
+ * Memoised, and only ever called for an armed turn: it used to run `mkdirSync`
+ * on every super-admin turn, including from the unit tests, which created the
+ * directory in the developer's home directory as a side effect of a pure
+ * options builder. A failure returns the intended path WITHOUT widening to
+ * HOME — a file tool then simply fails, which is the fail-closed direction.
  */
+let shellCwdMemo: string | null = null;
 function shellCwd(): string {
-  const base = process.env.HOME ?? process.cwd();
-  const dir = join(base, 'agent-shell');
+  if (shellCwdMemo !== null) return shellCwdMemo;
+  const dir = join(process.env.HOME ?? process.cwd(), 'agent-shell');
   try {
     mkdirSync(dir, { recursive: true });
-    return dir;
   } catch (err) {
-    logger.warn({ err, dir }, 'Could not create the agent shell working directory; falling back to HOME');
-    return base;
+    logger.warn({ err, dir }, 'Could not create the agent shell working directory');
   }
+  shellCwdMemo = dir;
+  return dir;
 }
 
 /**
@@ -361,6 +376,14 @@ function mutatingBuiltinGate(platform: Platform, conversationId: string, actorUs
             logger.warn({ platform, conversationId, tool: named }, 'Armed mutating built-in tool call');
             return { continue: true };
           }
+          // The interesting security event: something in this turn tried to
+          // reach a host-mutating tool it was never armed for. Logged at warn
+          // so an injection attempt leaves a trace, which the first version
+          // of this gate did not.
+          logger.warn(
+            { platform, conversationId, tool: named },
+            'Denied an unarmed mutating built-in tool call',
+          );
           return {
             continue: true,
             hookSpecificOutput: {
@@ -399,10 +422,21 @@ export function buildQueryOptions(
   // Web search is a privileged capability: admins and super admins only.
   const webSearch = atLeast(role, 'admin');
   // The full Agent SDK built-in surface is super-admin only, by the owner's
-  // explicit decision (community-agent#1405 follow-up). Every other tier keeps
-  // the pre-existing surface byte-for-byte: no built-ins for member/guest,
-  // WebSearch only for admin, and Task/WebFetch disallowed.
-  const fullBuiltins = role === 'super_admin';
+  // explicit decision (community-agent#1405 follow-up), and only inside an
+  // ARMED window. Every other tier — and an UNARMED super admin — keeps the
+  // pre-existing surface byte-for-byte: no built-ins for member/guest,
+  // WebSearch only for admin+, and Task/WebFetch disallowed.
+  //
+  // Gating the grant, not just the mutating half, is the correction from
+  // review: with only `Bash`/`Write`/`Edit`/`NotebookEdit` behind the hook,
+  // `Read` + `WebFetch` stayed granted and auto-approved in EVERY super-admin
+  // turn — a read-anything-then-send-anywhere pair reachable by injected text
+  // in a group, needing no arming at all. `WebFetch` egress never passes
+  // through the outbound secret redaction either.
+  //
+  // Empty `actorUserId` (the synthetic test call sites) fails closed.
+  const fullBuiltins =
+    role === 'super_admin' && actorUserId !== '' && isMutatingArmed(platform, conversationId, actorUserId);
   return {
     // Member/guest turns get the tiered AGENT_MODEL_MEMBER override when set
     // (issue #382), the same highest-volume/lowest-trust role split #347
@@ -439,8 +473,9 @@ export function buildQueryOptions(
       ...filterFeatureFlaggedTools(toolsForRole(role, platform)),
       ...(fullBuiltins ? ALL_BUILTIN_TOOLS : webSearch ? ['WebSearch'] : []),
     ],
-    // Super admins are granted the full surface, so nothing is disallowed for
-    // them; the mutating four are gated by the arming hook below instead.
+    // Nothing is disallowed inside an armed super-admin window (the surface it
+    // was armed for IS the full set); every other turn, including an unarmed
+    // super admin's, keeps the all-tier Task/WebFetch ban.
     disallowedTools: fullBuiltins ? [] : ['Task', 'WebFetch', ...(webSearch ? [] : ['WebSearch'])],
     permissionMode: 'default' as const,
     // Member/guest turns get a tighter loop-depth ceiling than admin+
@@ -451,9 +486,9 @@ export function buildQueryOptions(
     ...(resumeSession ? { resume: resumeSession } : {}),
     // Don't load the host machine's ~/.claude config into the agent.
     settingSources: [] as [],
-    // Only for a turn that is granted the built-in file/shell tools: confine
-    // the file tools to a dedicated directory (no additionalDirectories) and
-    // strip the registered secrets from the child's environment.
+    // Only inside an armed window: point the file tools at a working directory
+    // and strip the registered secret VALUES from the child's environment.
+    // Neither is containment — see the `shellCwd`/`shellSafeEnv` notes.
     ...(fullBuiltins ? { cwd: shellCwd(), env: shellSafeEnv() } : {}),
     // Agent Skills (issue #741): loads exactly the registered skills
     // manifest — the repo-bundled plugin directory and the literal
@@ -468,7 +503,7 @@ export function buildQueryOptions(
           skills: [...skillsManifest().enabledSkills],
         }
       : {}),
-    ...(webSearch
+    ...(webSearch || fullBuiltins
       ? {
           hooks: {
             PreToolUse: [
