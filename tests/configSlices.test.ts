@@ -247,3 +247,68 @@ test('loadConfig: a non-empty fetch allowlist enables the surface and parses to 
   assert.equal(on.fetchPage.maxBytes, 512_000);
   assert.equal(on.fetchPage.maxRedirects, 3);
 });
+
+// --- Member web research + link summaries ------------------------------------
+
+test('SECURITY: web research and link summaries are OFF unless explicitly enabled, and only the literal "true" turns them on', () => {
+  // Each opens a member-reachable surface — one a metered model call, one an
+  // egress request — so the default must be today's behaviour (neither
+  // exists), and a near-miss spelling must never quietly enable one.
+  const off = loadConfig(MINIMAL_ENV);
+  assert.equal(off.webResearch.enabled, false, 'absent = off');
+  assert.equal(off.linkSummary.enabled, false, 'absent = off');
+  for (const nearMiss of ['TRUE', 'True', 'yes', '1', 'on', ' true']) {
+    const cfg = loadConfig({
+      ...MINIMAL_ENV,
+      WEB_RESEARCH_ENABLED: nearMiss,
+      LINK_SUMMARY_ENABLED: nearMiss,
+    });
+    assert.equal(
+      cfg.webResearch.enabled,
+      false,
+      `WEB_RESEARCH_ENABLED=${JSON.stringify(nearMiss)} must not enable it`,
+    );
+    assert.equal(
+      cfg.linkSummary.enabled,
+      false,
+      `LINK_SUMMARY_ENABLED=${JSON.stringify(nearMiss)} must not enable it`,
+    );
+  }
+});
+
+test('loadConfig: web research and link summary caps default small and parse when set', () => {
+  const d = loadConfig(MINIMAL_ENV);
+  assert.equal(d.webResearch.dailyLimit, 5);
+  assert.equal(d.webResearch.maxTurns, 4);
+  assert.equal(d.linkSummary.dailyLimit, 20);
+  assert.equal(d.linkSummary.lookbackHours, 24);
+
+  const on = loadConfig({
+    ...MINIMAL_ENV,
+    WEB_RESEARCH_ENABLED: 'true',
+    WEB_RESEARCH_DAILY_LIMIT: '3',
+    WEB_RESEARCH_MAX_TURNS: '6',
+    LINK_SUMMARY_ENABLED: 'true',
+    LINK_SUMMARY_DAILY_LIMIT: '0',
+    LINK_SUMMARY_LOOKBACK_HOURS: '72',
+  });
+  assert.equal(on.webResearch.enabled, true);
+  assert.equal(on.webResearch.dailyLimit, 3);
+  assert.equal(on.webResearch.maxTurns, 6);
+  assert.equal(on.linkSummary.enabled, true);
+  assert.equal(on.linkSummary.dailyLimit, 0, '0 = unlimited, matching FETCH_PAGE_DAILY_LIMIT');
+  assert.equal(on.linkSummary.lookbackHours, 72);
+});
+
+test('loadConfig: the research turn ceiling, link lookback and caps are bounded at boot', () => {
+  assert.throws(() => loadConfig({ ...MINIMAL_ENV, WEB_RESEARCH_MAX_TURNS: '11' }), /WEB_RESEARCH_MAX_TURNS/);
+  assert.throws(() => loadConfig({ ...MINIMAL_ENV, WEB_RESEARCH_MAX_TURNS: '0' }), /WEB_RESEARCH_MAX_TURNS/);
+  assert.throws(
+    () => loadConfig({ ...MINIMAL_ENV, WEB_RESEARCH_DAILY_LIMIT: '-1' }),
+    /WEB_RESEARCH_DAILY_LIMIT/,
+  );
+  assert.throws(
+    () => loadConfig({ ...MINIMAL_ENV, LINK_SUMMARY_LOOKBACK_HOURS: '169' }),
+    /LINK_SUMMARY_LOOKBACK_HOURS/,
+  );
+});

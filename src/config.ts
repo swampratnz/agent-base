@@ -161,6 +161,16 @@ function buildConfig(env: ParsedEnv) {
       maxRedirects: env.FETCH_PAGE_MAX_REDIRECTS,
       dailyLimit: env.FETCH_PAGE_DAILY_LIMIT,
     },
+    webResearch: {
+      enabled: env.WEB_RESEARCH_ENABLED ?? false,
+      dailyLimit: env.WEB_RESEARCH_DAILY_LIMIT,
+      maxTurns: env.WEB_RESEARCH_MAX_TURNS,
+    },
+    linkSummary: {
+      enabled: env.LINK_SUMMARY_ENABLED ?? false,
+      dailyLimit: env.LINK_SUMMARY_DAILY_LIMIT,
+      lookbackHours: env.LINK_SUMMARY_LOOKBACK_HOURS,
+    },
     devTeam: {
       enabled: env.DEV_TEAM_ENABLED ?? false,
       endpointUrl: env.DEV_TEAM_ENDPOINT_URL,

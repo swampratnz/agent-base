@@ -21,6 +21,20 @@ CREATE TABLE IF NOT EXISTS background_job_costs (
 CREATE INDEX IF NOT EXISTS background_job_costs_created_at_idx
   ON background_job_costs (created_at DESC);
 
+-- Widens the job enum beyond the three the CREATE TABLE above pins:
+--  - 'web_research'  the member web-research tool's isolated search sub-turn —
+--                    a standalone query() whose cost no `interactions` row
+--                    captures, exactly like the three above.
+--
+-- ONE drop/re-add pair, listing every job: the same convention, for the same
+-- reason, as shortcut_hits_kind_check below. To add a job, EDIT this list —
+-- never append a second pair for this constraint name (the column-level CHECK
+-- above is auto-named background_job_costs_job_check, which is what the DROP
+-- replaces). tests/schemaConstraintIdempotency.test.ts enforces both halves.
+ALTER TABLE background_job_costs DROP CONSTRAINT IF EXISTS background_job_costs_job_check;
+ALTER TABLE background_job_costs ADD CONSTRAINT background_job_costs_job_check
+  CHECK (job IN ('moderation_llm', 'context_builder', 'knowledge_refresh', 'web_research'));
+
 -- ---------------------------------------------------------------------------
 -- Durable hit counts for the four env-gated turn-skipping shortcuts (issue
 -- #440) — each avoids a `query()` call against the shared Max pool but, until
