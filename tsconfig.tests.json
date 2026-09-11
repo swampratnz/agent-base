@@ -90,6 +90,7 @@
     "tests/schemaFragmentEquivalence.test.ts",
     "tests/secrets.test.ts",
     "tests/securityFloorGate.test.ts",
+    "tests/sessionPromptFingerprint.test.ts",
     "tests/skillsManifest.test.ts",
     "tests/slashDispatch.test.ts",
     "tests/storageLifecycle.test.ts",
