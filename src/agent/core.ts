@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   query,
   type HookJSONOutput,
@@ -19,6 +20,7 @@ import {
   recentConversationTail,
   searchMemory,
   setClaudeSessionId,
+  type StoredSession,
   type ConversationTailRow,
   type LanguagePreference,
   type ResponseStyle,
@@ -483,6 +485,45 @@ export function truncateIncomingMessage(text: string, maxChars: number): string 
   return `${text.slice(0, cut)}\n\n[message truncated: ${omitted} characters omitted]`;
 }
 
+/** sha256 of an assembled system prompt, stored with the session it started. */
+export function systemPromptFingerprint(systemPrompt: string): string {
+  return createHash('sha256').update(systemPrompt).digest('hex');
+}
+
+export type ResumeDecision =
+  { sessionId: string; reason: 'resumable' } | { sessionId: null; reason: 'none' | 'cap' | 'prompt-changed' };
+
+/**
+ * Whether a stored session may be resumed for this turn.
+ *
+ * SECURITY: a resumed Agent SDK session keeps the system prompt it was
+ * STARTED with and ignores the `systemPrompt` passed on resume (verified
+ * against the SDK: a session begun under prompt A and resumed with prompt B
+ * still follows A). Sessions are shared per (platform, conversation), so
+ * without this check every later speaker in a group ran under the FIRST
+ * speaker's prompt: their tier's role note, persona, response style, language
+ * preference and date line. Tools are chosen per turn, so no capability
+ * leaked, but the model's picture of who it was talking to was wrong in both
+ * directions (an admin told they weren't one; a member framed as an admin).
+ * So a session is resumable only while the prompt is byte-identical, which is
+ * exactly the prompt-cache precondition anyway. Otherwise the turn starts
+ * fresh, with the conversation tail backfilled as quarantined reference.
+ * A pre-fingerprint row (null) is never resumed.
+ */
+export function resumableSessionId(
+  stored: StoredSession | null,
+  promptHash: string,
+  now: number = Date.now(),
+): ResumeDecision {
+  if (!stored) return { sessionId: null, reason: 'none' };
+  const maxAgeMs = config.behaviour.sessionMaxAgeHours * 3_600_000;
+  if (stored.turnCount >= config.behaviour.sessionMaxTurns || now - stored.updatedAt.getTime() >= maxAgeMs) {
+    return { sessionId: null, reason: 'cap' };
+  }
+  if (stored.promptHash !== promptHash) return { sessionId: null, reason: 'prompt-changed' };
+  return { sessionId: stored.sessionId, reason: 'resumable' };
+}
+
 /**
  * Run one agent turn for an incoming message.
  *
@@ -566,19 +607,22 @@ export async function runAgentTurn(
   const memoryBlock = memories.length > 0 ? renderMemoryContext(memories) : '';
 
   // Session hygiene: cap resumed-session length and age so context (and any
-  // accumulated injection) can't grow without bound.
+  // accumulated injection) can't grow without bound, and never resume a
+  // session that was started under a different system prompt (see
+  // resumableSessionId: a resumed session keeps its original prompt).
+  const promptHash = systemPromptFingerprint(systemPrompt);
   const stored = await getClaudeSession(caller.platform, caller.conversationId);
-  const maxAgeMs = config.behaviour.sessionMaxAgeHours * 3_600_000;
-  const priorSession =
-    stored &&
-    stored.turnCount < config.behaviour.sessionMaxTurns &&
-    Date.now() - stored.updatedAt.getTime() < maxAgeMs
-      ? stored.sessionId
-      : null;
-  if (stored && !priorSession) {
+  const resume = resumableSessionId(stored, promptHash);
+  const priorSession = resume.sessionId;
+  if (resume.reason === 'cap') {
     logger.info(
-      { conversationId: caller.conversationId, turnCount: stored.turnCount },
+      { conversationId: caller.conversationId, turnCount: stored?.turnCount },
       'Session past turn/age cap — starting fresh',
+    );
+  } else if (resume.reason === 'prompt-changed') {
+    logger.info(
+      { conversationId: caller.conversationId },
+      'System prompt differs from the stored session (requester tier, persona, preferences or day) — starting fresh',
     );
   }
 
@@ -632,8 +676,8 @@ export async function runAgentTurn(
   }
 
   if (outcome.sessionId) {
-    await setClaudeSessionId(caller.platform, caller.conversationId, outcome.sessionId).catch((err) =>
-      logger.warn({ err }, 'Failed to persist session id'),
+    await setClaudeSessionId(caller.platform, caller.conversationId, outcome.sessionId, promptHash).catch(
+      (err) => logger.warn({ err }, 'Failed to persist session id'),
     );
   }
 

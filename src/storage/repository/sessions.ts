@@ -22,16 +22,23 @@ export interface StoredSession {
   sessionId: string;
   turnCount: number;
   updatedAt: Date;
+  /** sha256 of the system prompt the session started under; null for a pre-fingerprint row. */
+  promptHash: string | null;
 }
 
 export async function getClaudeSession(
   platform: Platform,
   conversationId: string,
 ): Promise<StoredSession | null> {
-  let rows: Array<{ claude_session_id: string | null; turn_count: unknown; updated_at: Date }>;
+  let rows: Array<{
+    claude_session_id: string | null;
+    turn_count: unknown;
+    updated_at: Date;
+    prompt_hash: string | null;
+  }>;
   try {
     ({ rows } = await pool.query(
-      `SELECT claude_session_id, turn_count, updated_at
+      `SELECT claude_session_id, turn_count, updated_at, prompt_hash
        FROM sessions WHERE platform = $1 AND conversation_id = $2`,
       [platform, conversationId],
     ));
@@ -47,6 +54,7 @@ export async function getClaudeSession(
     sessionId: row.claude_session_id,
     turnCount: Number(row.turn_count ?? 0),
     updatedAt: row.updated_at,
+    promptHash: row.prompt_hash ?? null,
   };
 }
 
@@ -55,17 +63,19 @@ export async function setClaudeSessionId(
   platform: Platform,
   conversationId: string,
   sessionId: string,
+  promptHash: string | null = null,
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO sessions (platform, conversation_id, claude_session_id, turn_count)
-     VALUES ($1, $2, $3, 1)
+    `INSERT INTO sessions (platform, conversation_id, claude_session_id, turn_count, prompt_hash)
+     VALUES ($1, $2, $3, 1, $4)
      ON CONFLICT (platform, conversation_id)
      DO UPDATE SET
        turn_count = CASE
          WHEN sessions.claude_session_id = EXCLUDED.claude_session_id
          THEN sessions.turn_count + 1 ELSE 1 END,
-       claude_session_id = EXCLUDED.claude_session_id`,
-    [platform, conversationId, sessionId],
+       claude_session_id = EXCLUDED.claude_session_id,
+       prompt_hash = EXCLUDED.prompt_hash`,
+    [platform, conversationId, sessionId, promptHash],
   );
 }
 

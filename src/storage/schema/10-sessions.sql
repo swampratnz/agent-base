@@ -19,3 +19,9 @@ CREATE TRIGGER sessions_set_updated_at
 
 -- Session hygiene: cap resumed-session length (see agent/core.ts).
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS turn_count INT NOT NULL DEFAULT 0;
+-- Fingerprint (sha256) of the system prompt the stored session was started
+-- under. A resumed Agent SDK session keeps its ORIGINAL system prompt and
+-- ignores the one passed on resume, so a session is only resumable while the
+-- prompt is byte-identical (same requester tier, persona, preferences, day).
+-- NULL (a pre-fingerprint row) is never resumed. See agent/core.ts.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS prompt_hash TEXT;

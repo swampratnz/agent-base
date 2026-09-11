@@ -99,6 +99,8 @@ Tier lists are **derived from tool registrations**, not maintained alongside
 them. A hand-mirrored list drifts, and a tool registered on the server but
 missing from its tier's offer list fails silently.
 
+**A resumed session never runs under someone else's system prompt.** Sessions are shared per `(platform, conversation)`, and a resumed Agent SDK session keeps the system prompt it was *started* with, ignoring the one passed on resume. Without a check, every later speaker in a group ran under the first speaker's prompt: their tier's role note, persona, preferences and date line. Tools stayed per-turn, so no capability leaked, but the model's idea of who it was talking to was wrong both ways (a verified admin told they were not one; a member framed as an admin). `runAgentTurn` therefore stores a sha256 fingerprint of the system prompt with each session and resumes only on an exact match (`resumableSessionId`). Any other turn starts fresh with the conversation tail backfilled as quarantined reference. A session with no stored fingerprint is never resumed. `clearUserSessions` on a role change remains as a belt-and-braces reset.
+
 ### 3. CONFIRM flow
 
 Destructive actions register a pending action; the router deterministically
