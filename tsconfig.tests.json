@@ -86,6 +86,7 @@
     "tests/rosterRetentionIndependence.test.ts",
     "tests/routerInterceptChain.test.ts",
     "tests/sanitizeName.test.ts",
+    "tests/schemaApplyRetry.test.ts",
     "tests/schemaConstraintIdempotency.test.ts",
     "tests/schemaFragmentEquivalence.test.ts",
     "tests/secrets.test.ts",
