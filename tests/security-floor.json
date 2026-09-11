@@ -1,5 +1,6 @@
 {
   "backgroundJobHealth.test.ts": 1,
+  "builtinToolArming.test.ts": 4,
   "configSlices.test.ts": 2,
   "createAgent.test.ts": 2,
   "failClosedMessages.test.ts": 1,
@@ -31,7 +32,7 @@
   "storageLifecycle.test.ts": 1,
   "systemPrompt.test.ts": 4,
   "textAttachment.test.ts": 4,
-  "toolLockdown.test.ts": 6,
+  "toolLockdown.test.ts": 8,
   "whatsappCloudWire.test.ts": 8,
   "whatsappLidMap.test.ts": 2,
   "whatsappWire.test.ts": 1

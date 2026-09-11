@@ -47,6 +47,7 @@
     "tests/ackClassifier.test.ts",
     "tests/backgroundJobHealth.test.ts",
     "tests/budgetCheckFailureNotice.test.ts",
+    "tests/builtinToolArming.test.ts",
     "tests/configSlices.test.ts",
     "tests/contextPack.test.ts",
     "tests/crashHandlers.test.ts",

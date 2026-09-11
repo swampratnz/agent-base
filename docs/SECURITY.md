@@ -71,12 +71,47 @@ point, not "is it generic?".
 
 ### 1. Tool lockdown
 
-Built-in agent tools are disabled per turn (`tools: []`). Admin+ turns get
-exactly one addition — search — and `WebFetch` is disallowed for **every**
-tier: the model constructs fetch URLs, so an injection could exfiltrate
-conversation content through a query string, and fetched pages are a rich
-injection vector. Search snippets are a much smaller surface, and the system
-prompt says they are untrusted content.
+Built-in agent tools are disabled per turn (`tools: []`) for guests and
+members. An ADMIN turn gets exactly one addition — search — and `WebFetch`
+stays disallowed below super admin: the model constructs fetch URLs, so an
+injection could exfiltrate conversation content through a query string, and
+fetched pages are a rich injection vector. Search snippets are a much smaller
+surface, and the system prompt says they are untrusted content.
+
+**A SUPER ADMIN turn is granted the FULL built-in surface, in every
+conversation** — `Read`/`Glob`/`Grep`/`WebSearch`/`WebFetch`/`Task`/`TodoWrite`
+plus `Bash`/`Write`/`Edit`/`NotebookEdit` — by the owner's explicit decision.
+This is the one place the base grants code execution, so its limits are stated
+plainly rather than implied:
+
+- **The mutating four are gated by an arming window** (`agent/builtinTools.ts`).
+  They are granted, but a `PreToolUse` hook denies them unless the ACTOR has
+  armed them in THIS conversation with a fresh platform message ("arm shell",
+  5 minutes, endable with "disarm shell"). Arming is classified in the router
+  before the model runs, super-admin only, keyed to the actor's own id — the
+  same trust property the CONFIRM flow has: **a prompt injection can ask to be
+  armed and can never arm itself.** The gate is a hook, not an `allowedTools`
+  omission, because a pre-approved tool never reaches `canUseTool`.
+- **Why a window rather than per-call confirmation:** the router serialises
+  work per conversation (`Router.enqueue`), so a turn blocking inside
+  `canUseTool` to await a CONFIRM would be waiting on a message queued behind
+  itself.
+- **File tools are confined.** A granted turn runs with a dedicated `cwd`
+  (`$HOME/agent-shell`) and no `additionalDirectories`, so `Read`/`Write`/
+  `Edit` cannot reach the app directory or its `.env`.
+- **`Bash` is NOT confined by `cwd`** — a shell can `cd` anywhere the service
+  account may read. Its real bound is the systemd unit (`ProtectSystem=strict`,
+  `ProtectHome=true`, `PrivateTmp=true`, `ReadWritePaths=` the app directory).
+- **Secrets are stripped from the child environment, except one.** The spawned
+  process gets a copy of `process.env` with every registered secret VALUE
+  removed (`runtimeSecrets()`), but `CLAUDE_CODE_OAUTH_TOKEN` must remain for
+  the CLI to authenticate. **An armed shell can therefore read the
+  subscription token.** Outbound redaction covers it being quoted back; it
+  does not cover a shell sending it somewhere itself.
+- **Residual risk, accepted by the owner:** in a group conversation other
+  members' messages are untrusted content in the same model context. Arming is
+  what stands between that and a shell, so an armed window in a busy group is
+  the exposure to think about — keep it short, and prefer a DM.
 
 Note that pre-approving tools is not restricting them. The restriction comes
 from the tool list attached to the turn.

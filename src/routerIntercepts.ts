@@ -85,6 +85,7 @@ export const PRE_TURN_SPINE = Object.freeze([
   'gated-guest',
   'record-inbound',
   'confirm-intercept',
+  'arm-shell',
   'escalation-confirm',
   'addressed-gate',
   'pause',
