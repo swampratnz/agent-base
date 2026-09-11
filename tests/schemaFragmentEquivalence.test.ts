@@ -15,6 +15,7 @@ const skip = hasDb
 const { pool, closeDb } = await import('../src/storage/db.js');
 const { bootConfig } = await import('../src/config/boot.js');
 const { loadSchemaSql } = await import('../src/storage/schema/manifest.js');
+const { applySchemaSql } = await import('../src/storage/migrate.js');
 
 /**
  * REPLAY-IDEMPOTENCY proof for the fragment split (docs/AGENT-BASE-PLAN.md
@@ -87,11 +88,14 @@ test(
     );
 
     // Exactly what migrate() does: one substitution, ONE multi-statement
-    // pool.query (atomicity is load-bearing — a mid-file failure must roll
-    // back the entire replay).
+    // query via applySchemaSql (atomicity is load-bearing — a mid-file
+    // failure must roll back the entire replay). Other test files write to
+    // this database in parallel, so the replay can lose a lock race; a
+    // deadlock (40P01) rolls the whole transaction back and applySchemaSql
+    // retries it, exactly as a production deploy now does.
     const raw = await loadSchemaSql();
     const sql = raw.replaceAll(':EMBEDDING_DIM', String(bootConfig.db.embeddingDim));
-    await pool.query(sql);
+    await applySchemaSql(sql);
 
     const after = await snapshotCatalog();
     assert.equal(

@@ -24,6 +24,51 @@ export interface ModuleMigrationFragment {
   sql: string;
 }
 
+/** Postgres `deadlock_detected`. */
+const DEADLOCK = '40P01';
+
+/**
+ * Apply the assembled schema as ONE multi-statement query, retrying only when
+ * Postgres aborts it as a deadlock victim (40P01).
+ *
+ * The replay takes ACCESS EXCLUSIVE locks (ALTER TABLE, constraint swaps)
+ * across many tables inside one transaction, so anything writing at the same
+ * time (the previous process during a deploy, or other test files sharing the
+ * CI database) can deadlock with it. Postgres rolls the victim's WHOLE
+ * transaction back, so a retry replays from a clean slate and the migration
+ * stays atomic. Any other error is thrown at once: only a lost lock race is
+ * worth repeating. `query` and `sleep` are injectable for tests.
+ */
+export async function applySchemaSql(
+  sql: string,
+  opts: {
+    query?: (sql: string) => Promise<unknown>;
+    attempts?: number;
+    baseDelayMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
+): Promise<void> {
+  const query = opts.query ?? ((q: string) => pool.query(q));
+  const attempts = opts.attempts ?? 5;
+  const baseDelayMs = opts.baseDelayMs ?? 200;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await query(sql);
+      return;
+    } catch (err) {
+      const code = (err as { code?: unknown } | null)?.code;
+      if (code !== DEADLOCK || attempt >= attempts) throw err;
+      const delayMs = baseDelayMs * 2 ** (attempt - 1) + Math.floor(Math.random() * baseDelayMs);
+      logger.warn(
+        { attempt, attempts, delayMs },
+        'Schema apply lost a deadlock; retrying the whole transaction',
+      );
+      await sleep(delayMs);
+    }
+  }
+}
+
 export async function migrate(moduleFragments: readonly ModuleMigrationFragment[] = []): Promise<void> {
   const base = await loadSchemaSql();
   // ONE multi-statement query, still: that is what makes a mid-file failure
@@ -37,7 +82,7 @@ export async function migrate(moduleFragments: readonly ModuleMigrationFragment[
     { embeddingDim: bootConfig.db.embeddingDim, moduleFragments: moduleFragments.length },
     'Applying database schema',
   );
-  await pool.query(sql);
+  await applySchemaSql(sql);
   logger.info('Database schema applied');
 }
 
