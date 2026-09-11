@@ -115,6 +115,42 @@ export const integrationsSlice = {
   FETCH_PAGE_MAX_REDIRECTS: z.coerce.number().int().nonnegative().max(10).default(3),
   // Per-caller daily cap. 0 = unlimited, matching IMAGE_GEN_DAILY_LIMIT.
   FETCH_PAGE_DAILY_LIMIT: z.coerce.number().int().nonnegative().default(20),
+
+  // --- Member web research (an isolated, search-only sub-turn) --------------
+  // A member-tier tool that answers a question the knowledge base could not,
+  // by running ONE separate query() with no conversation history, no module
+  // tools and exactly the built-in WebSearch — never WebFetch. The member
+  // turn itself still gets no WebSearch (docs/SECURITY.md): the sub-turn has
+  // nothing to exfiltrate and no way to act, so an injection planted in a
+  // search result lands in an empty room. Off by default — it is the one
+  // member-reachable path to a metered model call beyond the turn itself.
+  WEB_RESEARCH_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
+  // Per-caller daily cap. 0 = unlimited, matching FETCH_PAGE_DAILY_LIMIT; the
+  // default is deliberately small because every call spends model budget.
+  WEB_RESEARCH_DAILY_LIMIT: z.coerce.number().int().nonnegative().default(5),
+  // Agentic-turn ceiling for one research sub-turn (bounds its cost).
+  WEB_RESEARCH_MAX_TURNS: z.coerce.number().int().positive().max(10).default(4),
+
+  // --- Member link summaries (URL provenance, over util/safeFetch) -----------
+  // Lets a member ask about a link a HUMAN already posted in the same
+  // conversation. The tool refuses any URL that does not appear verbatim in a
+  // recent inbound message there, so the model can never compose a URL (the
+  // WebFetch exfiltration shape) — it can only re-read one the room already
+  // saw. Bot-authored messages never count, which closes the "get the bot to
+  // say a URL, then fetch it" loop. Byte/time/redirect ceilings are shared
+  // with page fetching (FETCH_PAGE_MAX_BYTES/_TIMEOUT_MS/_MAX_REDIRECTS). Off
+  // by default.
+  LINK_SUMMARY_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
+  // Per-caller daily cap. 0 = unlimited, matching FETCH_PAGE_DAILY_LIMIT.
+  LINK_SUMMARY_DAILY_LIMIT: z.coerce.number().int().nonnegative().default(20),
+  // How far back a posted link still counts as "posted here".
+  LINK_SUMMARY_LOOKBACK_HOURS: z.coerce.number().int().positive().max(168).default(24),
 };
 
 export type IntegrationsEnv = z.infer<z.ZodObject<typeof integrationsSlice>>;

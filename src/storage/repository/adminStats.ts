@@ -335,7 +335,7 @@ export async function usageStats(
 
 // --- Background job costs ---------------------------------------------------
 
-export type BackgroundJob = 'moderation_llm' | 'context_builder' | 'knowledge_refresh';
+export type BackgroundJob = 'moderation_llm' | 'context_builder' | 'knowledge_refresh' | 'web_research';
 
 /**
  * Records the cost of a standalone background `query()` call (issue #401) —

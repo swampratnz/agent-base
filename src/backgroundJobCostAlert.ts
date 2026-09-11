@@ -6,8 +6,13 @@ import { alertSuperAdmins as sendSuperAdminAlert } from './notifications.js';
 import type { JobSpec } from './jobs/types.js';
 import type { PlatformAdapter } from './platforms/types.js';
 
-/** The three background jobs that write `background_job_costs` rows (issue #401) — a fixed enum, never derived from anything dynamic. */
-const TRACKED_JOBS: readonly BackgroundJob[] = ['moderation_llm', 'context_builder', 'knowledge_refresh'];
+/** The jobs that write `background_job_costs` rows (issue #401, plus the member web-research sub-turn) — a fixed enum, never derived from anything dynamic. */
+const TRACKED_JOBS: readonly BackgroundJob[] = [
+  'moderation_llm',
+  'context_builder',
+  'knowledge_refresh',
+  'web_research',
+];
 
 export interface BackgroundJobCostAlertTracker {
   crossed: boolean;

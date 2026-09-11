@@ -109,6 +109,28 @@ test('schema fragments: shortcut_hits_kind_check permits every ShortcutKind, in 
   }
 });
 
+test('schema fragments: background_job_costs_job_check permits every BackgroundJob, in one pair (a job added to the union without widening the constraint fails here, not silently in production)', () => {
+  // Same shape as the shortcut_hits_kind_check pin above, with a sharper
+  // failure mode: recordBackgroundJobCost's callers fire it without awaiting
+  // and SWALLOW rejections by design (non-blocking telemetry), so a cost row
+  // for a job only the TYPE knows about would not fail loudly at runtime — the
+  // CHECK would reject it and the spend would simply never be recorded. The
+  // union is the source of truth; the constraint must list every member.
+  const pairs = [...schema.matchAll(/ADD\s+CONSTRAINT\s+background_job_costs_job_check[\s\S]*?;/g)];
+  assert.equal(pairs.length, 1, 'exactly one background_job_costs_job_check re-add is expected');
+  assert.match(pairs[0][0], /\)\s*\)\s*;$/, 'the whole CHECK (... IN (...)) clause should be captured');
+
+  const jobSource = readFileSync(new URL('../src/storage/repository/adminStats.ts', import.meta.url), 'utf8');
+  const union = /export type BackgroundJob =([\s\S]*?);/.exec(jobSource);
+  assert.ok(union, 'could not locate the BackgroundJob union — update this test if it moved');
+  const jobs = [...union[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  assert.ok(jobs.length >= 4, `expected to parse the BackgroundJob members, got ${jobs.length}`);
+
+  for (const job of jobs) {
+    assert.match(pairs[0][0], new RegExp(`'${job}'`), `background_job_costs_job_check must permit '${job}'`);
+  }
+});
+
 test('schema manifest: every .sql file in src/storage/schema/ is listed exactly once, and every listed fragment exists on disk', () => {
   // The silent-drop hazard: `loadSchemaSql()` reads ONLY what the manifest
   // lists (an explicit array, not a glob, because concatenation order is

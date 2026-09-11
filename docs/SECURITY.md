@@ -278,6 +278,31 @@ fetching builds a tool over `safeFetch`, where the host allowlist is enforced
 before the request, the resolved URL can be shown to a human for CONFIRM, and
 the call lands in the audit log.
 
+Two member-facing surfaces keep that rule by construction rather than by
+exception, and both are off unless a deployment turns them on:
+
+- **Web research** (`WEB_RESEARCH_ENABLED`) runs one *isolated* `query()` with
+  exactly the built-in `WebSearch` — no conversation history in its prompt, no
+  module tools, never `WebFetch` — and hands the answer back to the member turn
+  as untrusted data. The member turn itself still gets no `WebSearch`. An
+  injection planted in a search result therefore lands in a context that holds
+  nothing worth exfiltrating and has no tool that can act. It is bounded by a
+  per-caller daily cap (`WEB_RESEARCH_DAILY_LIMIT`) and a turn ceiling
+  (`WEB_RESEARCH_MAX_TURNS`), and its spend is written to
+  `background_job_costs` as `web_research`, so the cost-spike alert watches it
+  like every other standalone call.
+- **Link summaries** (`LINK_SUMMARY_ENABLED`) fetch through `safeFetch` only a
+  URL that appears *verbatim* in a recent inbound, human-authored message in
+  the caller's own conversation, with that URL's host as the entire allowlist.
+  The model cannot compose a URL — the `WebFetch` exfiltration shape — only
+  re-read one the room has already seen; and because bot-authored messages
+  never count, it cannot be talked into posting an exfiltration URL and then
+  fetching it. Every guard above still applies, including per-hop
+  re-allowlisting, so a redirect off the posted host is refused.
+
+The tools themselves are module-owned — this package ships no tool handlers.
+What base owns is the switches, their defaults, and the cost ledger's job enum.
+
 ### 9. Auditability
 
 Privileged mutations go through the kernel's audit helper: an audit row plus a
