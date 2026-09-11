@@ -26,6 +26,13 @@ import { sanitizeName } from './util/sanitizeName.js';
 import { internalErrorReply, type runAgentTurn, type AgentReply } from './agent/core.js';
 import { notice, isRegisteredLanguage, isRegisteredStyle } from './strings/catalogue.js';
 import {
+  armMutatingTools,
+  armedSecondsRemaining,
+  classifyArmingReply,
+  disarmMutatingTools,
+  sweepExpiredArmings,
+} from './agent/builtinTools.js';
+import {
   cancelPendingAction,
   classifyConfirmReply,
   hasPendingAction,
@@ -748,6 +755,7 @@ export class Router {
       if (now - at > repeatQuestionCooldownMs) this.repeatQuestionAlertLastCheck.delete(key);
     }
     sweepExpiredPendingActions();
+    sweepExpiredArmings();
   }
 
   register(adapter: PlatformAdapter): void {
@@ -995,6 +1003,7 @@ export class Router {
     'gated-guest': (ctx) => this.gatedGuestStep(ctx),
     'record-inbound': (ctx) => this.recordInboundStep(ctx),
     'confirm-intercept': (ctx) => this.confirmInterceptStep(ctx),
+    'arm-shell': (ctx) => this.armShellStep(ctx),
     'escalation-confirm': (ctx) => this.escalationConfirmStep(ctx),
     'addressed-gate': (ctx) => this.addressedGateStep(ctx),
     pause: (ctx) => this.pauseStep(ctx),
@@ -1266,6 +1275,62 @@ export class Router {
       kind: msg.addressedToBot || msg.isDirect ? 'addressed' : 'ambient',
     }).catch((err) => logger.error({ err }, 'Failed to record inbound interaction'));
     return 'continue';
+  }
+
+  /**
+   * Deterministic arming intercept for the super-admin built-in tool surface
+   * (`builtinTools.ts`). Sibling of the CONFIRM intercept below and placed
+   * next to it for the same reasons: it runs BEFORE the addressed gate (so a
+   * bare "arm shell" works in a group, where a plain reply is not
+   * "addressed"), it lives entirely in the router, and it NEVER reaches the
+   * model. That last property is the whole point — an injected turn can ask
+   * to be armed, and only a fresh platform message from a super admin in
+   * their own conversation can actually arm it.
+   *
+   * Super-admin only, checked against the tier the `role-resolution` step
+   * resolved from the platform envelope, never from message content. Any
+   * other tier typing the phrase falls through untouched (no acknowledgement,
+   * no hint that the phrase means anything).
+   */
+  private async armShellStep(ctx: PreTurnContext): Promise<InterceptOutcome> {
+    const { msg, adapter } = ctx;
+    const verdict = classifyArmingReply(msg.text);
+    if (!verdict || ctx.state.role !== 'super_admin') return 'continue';
+    if (verdict === 'disarm') {
+      const disarmParent = this.autoAnswerThreadParents.get(msg.conversationId)?.parent;
+      const wasArmed =
+        disarmMutatingTools(msg.platform, msg.conversationId, msg.userId) ||
+        (disarmParent !== undefined &&
+          disarmParent !== msg.conversationId &&
+          disarmMutatingTools(msg.platform, disarmParent, msg.userId));
+      await this.send(
+        adapter,
+        msg.conversationId,
+        wasArmed ? 'Shell tools disarmed.' : 'Shell tools were not armed.',
+      ).catch((err) => logger.error({ err }, 'Failed to send disarm acknowledgement'));
+      return 'handled';
+    }
+    // Arm the message's own conversation AND, when the message arrived inside
+    // a bot-opened auto-answer thread, its parent channel — the turn that
+    // follows may be keyed to either id. Same both-ids reasoning as the
+    // CONFIRM intercept's parent fallback below (audit M1).
+    armMutatingTools(msg.platform, msg.conversationId, msg.userId);
+    const armParent = this.autoAnswerThreadParents.get(msg.conversationId)?.parent;
+    if (armParent && armParent !== msg.conversationId) {
+      armMutatingTools(msg.platform, armParent, msg.userId);
+    }
+    logger.warn(
+      { platform: msg.platform, conversationId: msg.conversationId },
+      'Super-admin armed the mutating built-in tools (Bash/Write/Edit/NotebookEdit)',
+    );
+    const seconds = armedSecondsRemaining(msg.platform, msg.conversationId, msg.userId);
+    await this.send(
+      adapter,
+      msg.conversationId,
+      `Shell tools armed for ${Math.round(seconds / 60)} min in this conversation. ` +
+        'Bash, Write, Edit and NotebookEdit will run until it expires. Reply "disarm shell" to end it now.',
+    ).catch((err) => logger.error({ err }, 'Failed to send arm acknowledgement'));
+    return 'handled';
   }
 
   private async confirmInterceptStep(ctx: PreTurnContext): Promise<InterceptOutcome> {

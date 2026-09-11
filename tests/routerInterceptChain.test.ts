@@ -30,6 +30,7 @@ test('SECURITY: PRE_TURN_SPINE runs in exactly the audited order — CONFIRM bef
       'gated-guest',
       'record-inbound',
       'confirm-intercept',
+      'arm-shell',
       'escalation-confirm',
       'addressed-gate',
       'pause',
@@ -52,7 +53,7 @@ test('SECURITY: PRE_TURN_SPINE is frozen — no runtime mutation can insert, rem
     mutable[0] = 'rogue-step';
   });
   assert.equal(PRE_TURN_SPINE[0], 'block-list');
-  assert.equal(PRE_TURN_SPINE.length, 13);
+  assert.equal(PRE_TURN_SPINE.length, 14);
 });
 
 test('SECURITY: every spine step name is rejected by registration — an intercept can never shadow or displace a spine step', () => {

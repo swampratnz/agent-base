@@ -71,12 +71,63 @@ point, not "is it generic?".
 
 ### 1. Tool lockdown
 
-Built-in agent tools are disabled per turn (`tools: []`). Admin+ turns get
-exactly one addition — search — and `WebFetch` is disallowed for **every**
-tier: the model constructs fetch URLs, so an injection could exfiltrate
-conversation content through a query string, and fetched pages are a rich
-injection vector. Search snippets are a much smaller surface, and the system
-prompt says they are untrusted content.
+Built-in agent tools are disabled per turn (`tools: []`) for guests and
+members. An ADMIN turn gets exactly one addition — search — and `WebFetch`
+stays disallowed below super admin: the model constructs fetch URLs, so an
+injection could exfiltrate conversation content through a query string, and
+fetched pages are a rich injection vector. Search snippets are a much smaller
+surface, and the system prompt says they are untrusted content.
+
+**A SUPER ADMIN turn is granted the FULL built-in surface — but only inside an
+ARMED window** — `Read`/`Glob`/`Grep`/`WebSearch`/`WebFetch`/`Task`/`TodoWrite`
+plus `Bash`/`Write`/`Edit`/`NotebookEdit`, by the owner's explicit decision.
+This is the one place the base grants code execution, so its limits are stated
+plainly, and the claims below were corrected after an adversarial review found
+the first version both under-gated and overstated:
+
+- **Unarmed, a super-admin turn is identical to an admin turn:** `['WebSearch']`
+  only, with `Task`/`WebFetch` disallowed. The **grant itself** is conditional
+  on arming (`core.ts`'s `fullBuiltins`). The first version gated only
+  `Bash`/`Write`/`Edit`/`NotebookEdit`, which left `Read` + `WebFetch` granted
+  and auto-approved in every super-admin turn — a read-anything-then-
+  send-anywhere pair needing no arming, reachable by injected text in a group.
+- **Arming** (`agent/builtinTools.ts`): the ACTOR sends a fresh platform
+  message ("arm shell", 5 minutes, endable with "disarm shell"), classified in
+  the router's `arm-shell` spine step before the model runs, super-admin only,
+  keyed to the actor's own id. **A prompt injection can ask to be armed and can
+  never arm itself** — the same trust property the CONFIRM flow has. A
+  `PreToolUse` hook additionally re-checks the window for the mutating four,
+  because the options object is built once while the window can expire
+  mid-turn; a denial is logged at `warn`.
+- **Why a window rather than per-call confirmation:** the router serialises
+  work per conversation (`Router.enqueue`), so a turn blocking inside
+  `canUseTool` to await a CONFIRM would be waiting on a message queued behind
+  itself.
+- **`cwd` is a starting directory, NOT a jail.** An armed turn runs in
+  `$HOME/agent-shell` with no `additionalDirectories`, but a bare tool name in
+  `allowedTools` carries no path predicate, and on this deployment `HOME` is
+  `/opt/community-agent/home` — i.e. *inside* the app directory, two levels
+  from its `.env`. Do not read the working directory as separation.
+- **`Bash` is bounded only by the unit** (`ProtectSystem=strict`,
+  `ProtectHome=true`, `PrivateTmp=true`, `ReadWritePaths=` the app directory) —
+  which still contains the deployed `dist/`, the `.env`, the WhatsApp auth
+  state and the CLI config dir. **One armed call can rewrite the running code**,
+  and that survives the window, the disarm and the next restart. The TTL
+  bounds when an injection can strike, not how long the consequence lasts.
+- **Stripping secrets from the child environment is defence-in-depth, not
+  containment.** The child gets `process.env` minus every registered secret
+  VALUE (`runtimeSecrets()`), except `CLAUDE_CODE_OAUTH_TOKEN`, which the CLI
+  needs. But it runs as the same uid, so an armed shell can read the parent's
+  `/proc/<pid>/environ` or `cat` the `.env` directly. Values under 8 chars are
+  kept by design.
+- **Outbound redaction does not cover a shell's own egress.** `redactSecrets`
+  is exact-value plus a fixed pattern list, applied on the adapter send path.
+  It does not see `curl` or a `WebFetch` URL, and it does not catch an encoded
+  or chunked representation of a secret.
+- **Residual risk, accepted by the owner:** in a group conversation other
+  members' messages are untrusted content in the same model context. Arming is
+  what stands between that and the full surface, so an armed window in a busy
+  group is the exposure that matters — keep it short, and prefer a DM.
 
 Note that pre-approving tools is not restricting them. The restriction comes
 from the tool list attached to the turn.

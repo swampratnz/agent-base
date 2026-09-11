@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   query,
   type HookJSONOutput,
@@ -25,6 +27,8 @@ import {
   type LanguagePreference,
   type ResponseStyle,
 } from '../storage/repository.js';
+import { ALL_BUILTIN_TOOLS, isMutatingArmed, MUTATING_BUILTIN_TOOLS } from './builtinTools.js';
+import { runtimeSecrets } from './secrets.js';
 import { finalizeTurnState, type TurnStateBag } from './turnState.js';
 import { getCodeAnswersPolicy } from '../storage/policyStore.js';
 import { queuePendingAlert } from '../pendingAlertQueue.js';
@@ -290,6 +294,122 @@ export function filterFeatureFlaggedTools(tools: string[]): string[] {
  *    dedup history before either recorded and race past the guard entirely
  *    (adversarial review on issue #706).
  */
+/**
+ * The child process the SDK spawns inherits this process's environment, which
+ * is where every outward credential lives. For a turn that is granted `Bash`,
+ * that environment is readable by the model, so strip the registered secret
+ * VALUES out of the copy handed to the child.
+ *
+ * `CLAUDE_CODE_OAUTH_TOKEN` deliberately survives: the spawned Claude Code
+ * binary authenticates with it (agent/auth.ts), so removing it would break the
+ * turn outright.
+ *
+ * This is defence-in-depth, NOT containment, and review was right to say the
+ * first version of the docs invited over-reading it: the child runs as the
+ * same uid, so an armed shell can read the parent's `/proc/<pid>/environ`
+ * (no `ProcSubset`/`hidepid` on this unit) or simply `cat` the `.env` — both
+ * return every value filtered out here. Values shorter than 8 chars are kept
+ * by design. It raises the cost of an accidental echo; it stops nothing
+ * deliberate.
+ */
+function shellSafeEnv(): Record<string, string | undefined> {
+  const secrets = new Set(runtimeSecrets().filter((value) => value.length >= 8));
+  const keep = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  const out: Record<string, string | undefined> = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined && secrets.has(value)) continue;
+    out[name] = value;
+  }
+  if (keep !== undefined) out.CLAUDE_CODE_OAUTH_TOKEN = keep;
+  return out;
+}
+
+/**
+ * Default working directory for an armed turn's file tools.
+ *
+ * This is a STARTING directory, not a jail: a bare tool name in
+ * `allowedTools` carries no path predicate, so do not read this as
+ * confinement (an earlier version of docs/SECURITY.md did, wrongly — on this
+ * deployment HOME is `/opt/community-agent/home`, so this directory sits
+ * INSIDE the app directory, two levels from its `.env`). `Bash` is not bound
+ * by it at all; a shell can `cd` anywhere the service account may read.
+ *
+ * Memoised, and only ever called for an armed turn: it used to run `mkdirSync`
+ * on every super-admin turn, including from the unit tests, which created the
+ * directory in the developer's home directory as a side effect of a pure
+ * options builder. A failure returns the intended path WITHOUT widening to
+ * HOME — a file tool then simply fails, which is the fail-closed direction.
+ */
+let shellCwdMemo: string | null = null;
+function shellCwd(): string {
+  if (shellCwdMemo !== null) return shellCwdMemo;
+  const dir = join(process.env.HOME ?? process.cwd(), 'agent-shell');
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (err) {
+    logger.warn({ err, dir }, 'Could not create the agent shell working directory');
+  }
+  shellCwdMemo = dir;
+  return dir;
+}
+
+/**
+ * `PreToolUse` gate for the mutating built-ins. Denies unless the ACTOR has a
+ * live arming in THIS conversation (`builtinTools.ts`), so a prompt injection
+ * riding in a group conversation cannot reach a shell: it can ask to be armed,
+ * but arming only happens in the router, from a fresh message by the actor.
+ *
+ * A hook, not `allowedTools` omission, for the reason the WebSearch cap is a
+ * hook too: a tool pre-approved in `allowedTools` never reaches `canUseTool`,
+ * while a `PreToolUse` hook is guaranteed to fire either way. Fails closed on
+ * a missing actor id or a thrown check.
+ */
+function mutatingBuiltinGate(platform: Platform, conversationId: string, actorUserId: string) {
+  return {
+    matcher: MUTATING_BUILTIN_TOOLS.join('|'),
+    hooks: [
+      async (input: unknown): Promise<HookJSONOutput> => {
+        const toolName = (input as { tool_name?: unknown } | undefined)?.tool_name;
+        const named = typeof toolName === 'string' ? toolName : 'That tool';
+        try {
+          if (actorUserId && isMutatingArmed(platform, conversationId, actorUserId)) {
+            logger.warn({ platform, conversationId, tool: named }, 'Armed mutating built-in tool call');
+            return { continue: true };
+          }
+          // The interesting security event: something in this turn tried to
+          // reach a host-mutating tool it was never armed for. Logged at warn
+          // so an injection attempt leaves a trace, which the first version
+          // of this gate did not.
+          logger.warn(
+            { platform, conversationId, tool: named },
+            'Denied an unarmed mutating built-in tool call',
+          );
+          return {
+            continue: true,
+            hookSpecificOutput: {
+              hookEventName: 'PreToolUse',
+              permissionDecision: 'deny',
+              permissionDecisionReason:
+                `${named} is not armed. A super admin must send "arm shell" in this conversation first; ` +
+                'asking for it in a message can never arm it.',
+            },
+          };
+        } catch (err) {
+          logger.error({ err, conversationId }, 'Arming check threw — denying the mutating tool call');
+          return {
+            continue: true,
+            hookSpecificOutput: {
+              hookEventName: 'PreToolUse',
+              permissionDecision: 'deny',
+              permissionDecisionReason: `${named} is unavailable — the arming check failed.`,
+            },
+          };
+        }
+      },
+    ],
+  };
+}
+
 export function buildQueryOptions(
   role: CallerContext['role'],
   systemPrompt: string,
@@ -297,9 +417,26 @@ export function buildQueryOptions(
   resumeSession: string | null,
   conversationId: string,
   platform: Platform = 'discord',
+  actorUserId: string = '',
 ) {
   // Web search is a privileged capability: admins and super admins only.
   const webSearch = atLeast(role, 'admin');
+  // The full Agent SDK built-in surface is super-admin only, by the owner's
+  // explicit decision (community-agent#1405 follow-up), and only inside an
+  // ARMED window. Every other tier — and an UNARMED super admin — keeps the
+  // pre-existing surface byte-for-byte: no built-ins for member/guest,
+  // WebSearch only for admin+, and Task/WebFetch disallowed.
+  //
+  // Gating the grant, not just the mutating half, is the correction from
+  // review: with only `Bash`/`Write`/`Edit`/`NotebookEdit` behind the hook,
+  // `Read` + `WebFetch` stayed granted and auto-approved in EVERY super-admin
+  // turn — a read-anything-then-send-anywhere pair reachable by injected text
+  // in a group, needing no arming at all. `WebFetch` egress never passes
+  // through the outbound secret redaction either.
+  //
+  // Empty `actorUserId` (the synthetic test call sites) fails closed.
+  const fullBuiltins =
+    role === 'super_admin' && actorUserId !== '' && isMutatingArmed(platform, conversationId, actorUserId);
   return {
     // Member/guest turns get the tiered AGENT_MODEL_MEMBER override when set
     // (issue #382), the same highest-volume/lowest-trust role split #347
@@ -318,7 +455,10 @@ export function buildQueryOptions(
     // (issue #741) — uniformly, no tier gating, matching the ungated
     // prompt-review checklist this replaces. `allowedTools` alone only
     // auto-approves; this list is what actually restricts the surface.
-    tools: [...(webSearch ? ['WebSearch'] : []), ...(config.agentSkills.enabled ? ['Skill'] : [])],
+    tools: [
+      ...(fullBuiltins ? ALL_BUILTIN_TOOLS : webSearch ? ['WebSearch'] : []),
+      ...(config.agentSkills.enabled ? ['Skill'] : []),
+    ],
     // Deliberately NOT adding 'Skill' here, unlike WebSearch above: the
     // installed SDK's own type declarations (sdk.d.ts, pinned at
     // @anthropic-ai/claude-agent-sdk@0.3.220) document that passing 'Skill'
@@ -331,9 +471,12 @@ export function buildQueryOptions(
     // tool that's granted in `tools` but never actually approved to fire.
     allowedTools: [
       ...filterFeatureFlaggedTools(toolsForRole(role, platform)),
-      ...(webSearch ? ['WebSearch'] : []),
+      ...(fullBuiltins ? ALL_BUILTIN_TOOLS : webSearch ? ['WebSearch'] : []),
     ],
-    disallowedTools: ['Task', 'WebFetch', ...(webSearch ? [] : ['WebSearch'])],
+    // Nothing is disallowed inside an armed super-admin window (the surface it
+    // was armed for IS the full set); every other turn, including an unarmed
+    // super admin's, keeps the all-tier Task/WebFetch ban.
+    disallowedTools: fullBuiltins ? [] : ['Task', 'WebFetch', ...(webSearch ? [] : ['WebSearch'])],
     permissionMode: 'default' as const,
     // Member/guest turns get a tighter loop-depth ceiling than admin+
     // (issue #347): MEMBER_TOOLS is a much narrower surface, so a
@@ -343,6 +486,10 @@ export function buildQueryOptions(
     ...(resumeSession ? { resume: resumeSession } : {}),
     // Don't load the host machine's ~/.claude config into the agent.
     settingSources: [] as [],
+    // Only inside an armed window: point the file tools at a working directory
+    // and strip the registered secret VALUES from the child's environment.
+    // Neither is containment — see the `shellCwd`/`shellSafeEnv` notes.
+    ...(fullBuiltins ? { cwd: shellCwd(), env: shellSafeEnv() } : {}),
     // Agent Skills (issue #741): loads exactly the registered skills
     // manifest — the repo-bundled plugin directory and the literal
     // hand-written allowlist (enabledSkills.ts), with the never-'all'
@@ -356,10 +503,11 @@ export function buildQueryOptions(
           skills: [...skillsManifest().enabledSkills],
         }
       : {}),
-    ...(webSearch
+    ...(webSearch || fullBuiltins
       ? {
           hooks: {
             PreToolUse: [
+              ...(fullBuiltins ? [mutatingBuiltinGate(platform, conversationId, actorUserId)] : []),
               {
                 matcher: 'WebSearch',
                 hooks: [
@@ -898,6 +1046,7 @@ async function execTurn(
               resumeSession,
               caller.conversationId,
               caller.platform,
+              caller.userId,
             ),
             abortController,
           },
