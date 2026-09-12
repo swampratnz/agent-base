@@ -27,6 +27,7 @@
   "secrets.test.ts": 9,
   "securityFloorGate.test.ts": 8,
   "sessionPromptFingerprint.test.ts": 2,
+  "shellArmingPrompt.test.ts": 4,
   "skillsManifest.test.ts": 4,
   "slashDispatch.test.ts": 5,
   "storageLifecycle.test.ts": 1,

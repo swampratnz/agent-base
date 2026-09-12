@@ -103,6 +103,19 @@ the first version both under-gated and overstated:
   work per conversation (`Router.enqueue`), so a turn blocking inside
   `canUseTool` to await a CONFIRM would be waiting on a message queued behind
   itself.
+- **Arming must change the SYSTEM PROMPT, or it does nothing.** Learned the
+  hard way: 0.7.0 shipped every bullet above and the feature was inert. A
+  resumed Agent SDK session keeps the configuration it was STARTED with (§2),
+  so an `arm shell` followed by a request resumed the session the *unarmed*
+  message had opened seconds earlier, and the armed tool list never reached the
+  model — which correctly answered that it had no shell. Since 0.8.0 an armed
+  turn renders a `shell-arming` prompt slot (fixed text, no countdown), so the
+  prompt fingerprint necessarily differs and `resumableSessionId` starts a
+  fresh session carrying the new surface. Two consequences worth stating: an
+  arm and a disarm each cost one session restart, and the armed note must stay
+  byte-stable, because per-turn variance would restart the session on every
+  message inside the window. An unarmed turn renders no slot and is
+  byte-identical to every release before 0.8.0.
 - **`cwd` is a starting directory, NOT a jail.** An armed turn runs in
   `$HOME/agent-shell` with no `additionalDirectories`, but a bare tool name in
   `allowedTools` carries no path predicate, and on this deployment `HOME` is
@@ -150,7 +163,7 @@ Tier lists are **derived from tool registrations**, not maintained alongside
 them. A hand-mirrored list drifts, and a tool registered on the server but
 missing from its tier's offer list fails silently.
 
-**A resumed session never runs under someone else's system prompt.** Sessions are shared per `(platform, conversation)`, and a resumed Agent SDK session keeps the system prompt it was *started* with, ignoring the one passed on resume. Without a check, every later speaker in a group ran under the first speaker's prompt: their tier's role note, persona, preferences and date line. Tools stayed per-turn, so no capability leaked, but the model's idea of who it was talking to was wrong both ways (a verified admin told they were not one; a member framed as an admin). `runAgentTurn` therefore stores a sha256 fingerprint of the system prompt with each session and resumes only on an exact match (`resumableSessionId`). Any other turn starts fresh with the conversation tail backfilled as quarantined reference. A session with no stored fingerprint is never resumed. `clearUserSessions` on a role change remains as a belt-and-braces reset.
+**A resumed session never runs under someone else's system prompt.** Sessions are shared per `(platform, conversation)`, and a resumed Agent SDK session keeps the system prompt it was *started* with, ignoring the one passed on resume. Without a check, every later speaker in a group ran under the first speaker's prompt: their tier's role note, persona, preferences and date line. The model's idea of who it was talking to was wrong both ways (a verified admin told they were not one; a member framed as an admin). An earlier version of this section also claimed no capability could leak, because tools were chosen per turn. **Treat that as unproven.** The 0.7.0 arming bug (§1) is evidence against it: a turn whose options granted the full built-in surface behaved as though it had none, which is what a session freezing its tool configuration alongside its prompt would look like. What the deployed design guarantees does not rest on the answer — a role change alters the role note, so the prompt differs, so the session is never resumed across tiers at all. `runAgentTurn` therefore stores a sha256 fingerprint of the system prompt with each session and resumes only on an exact match (`resumableSessionId`). Any other turn starts fresh with the conversation tail backfilled as quarantined reference. A session with no stored fingerprint is never resumed. `clearUserSessions` on a role change remains as a belt-and-braces reset.
 
 ### 3. CONFIRM flow
 
