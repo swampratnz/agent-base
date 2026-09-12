@@ -34,6 +34,7 @@ import { getCodeAnswersPolicy } from '../storage/policyStore.js';
 import { queuePendingAlert } from '../pendingAlertQueue.js';
 import {
   buildSystemPrompt,
+  type PromptPolicy,
   renderConversationTail,
   renderMemoryContext,
   renderRequesterTag,
@@ -638,6 +639,33 @@ export function systemPromptFingerprint(systemPrompt: string): string {
   return createHash('sha256').update(systemPrompt).digest('hex');
 }
 
+/**
+ * Assemble a turn's prompt policy, including whether the mutating built-ins
+ * are armed for THIS actor in THIS conversation.
+ *
+ * Exported purely as a test seam, and that is the point. The 0.7.0 arming bug
+ * was not a type error — every argument was threaded correctly — it was that
+ * nothing asserted the production path ever consulted `isMutatingArmed`. A
+ * flag with a safe default and no behaviour test is how a feature ships
+ * switched off while every gate reports success. The arming key is
+ * (platform, conversationId, userId), matching what the router's arm-shell
+ * step wrote and what `buildQueryOptions` checks, so all three agree by
+ * construction.
+ */
+export function promptPolicyFor(
+  caller: CallerContext,
+  codeAnswers: PromptPolicy['codeAnswers'],
+  responseStyle: string,
+  languagePreference: string,
+): PromptPolicy {
+  return {
+    codeAnswers,
+    responseStyle,
+    languagePreference,
+    shellArmed: isMutatingArmed(caller.platform, caller.conversationId, caller.userId),
+  };
+}
+
 export type ResumeDecision =
   { sessionId: string; reason: 'resumable' } | { sessionId: null; reason: 'none' | 'cap' | 'prompt-changed' };
 
@@ -650,9 +678,19 @@ export type ResumeDecision =
  * still follows A). Sessions are shared per (platform, conversation), so
  * without this check every later speaker in a group ran under the FIRST
  * speaker's prompt: their tier's role note, persona, response style, language
- * preference and date line. Tools are chosen per turn, so no capability
- * leaked, but the model's picture of who it was talking to was wrong in both
- * directions (an admin told they weren't one; a member framed as an admin).
+ * preference and date line — the model's picture of who it was talking to was
+ * wrong in both directions (an admin told they weren't one; a member framed
+ * as an admin).
+ *
+ * This used to add that tools are chosen per turn, so no capability could
+ * leak. That is NOT established: the 0.7.0 arming bug showed a turn whose
+ * options granted the full built-in surface behaving as though it had none,
+ * which is what a session freezing its tool configuration alongside its
+ * prompt would look like. The guarantee does not depend on it either way,
+ * because a tier change alters the role note and so the prompt hash. It is
+ * also why anything that changes the TOOL surface without changing the prompt
+ * must add a prompt slot (see `PromptPolicy.shellArmed`): otherwise it is
+ * silently inert on every conversation with a live session.
  * So a session is resumable only while the prompt is byte-identical, which is
  * exactly the prompt-cache precondition anyway. Otherwise the turn starts
  * fresh, with the conversation tail backfilled as quarantined reference.
@@ -742,7 +780,7 @@ export async function runAgentTurn(
   const persona = selectPersona({ text: userText });
   const systemPrompt = buildSystemPrompt(
     caller,
-    { codeAnswers, responseStyle, languagePreference: languagePreference ?? 'auto' },
+    promptPolicyFor(caller, codeAnswers, responseStyle, languagePreference ?? 'auto'),
     persona,
   );
   // Recalled messages are untrusted user content: they ride in the user turn
