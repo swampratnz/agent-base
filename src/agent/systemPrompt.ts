@@ -215,6 +215,31 @@ export function renderRequesterTag(userName: string | null | undefined): string 
   return name ? `[Requester: ${name}]` : '';
 }
 
+/** Caller-side knobs for `untrustedEntryContent` (agent-base #181, WattoBot #181). */
+export interface UntrustedEntryOptions {
+  /**
+   * Character cap, default 300. The base's own renderers (memory recall, the
+   * conversation tail) keep the default; a module rendering a document it
+   * owns — a skill's markdown, a routine's findings — passes the cap that
+   * fits the document. A cut entry ends with `TRUNCATION_MARK` so nobody
+   * debugs a model for ignoring text it was never shown.
+   */
+  maxChars?: number;
+  /**
+   * Keep line breaks (each normalised to `\n`). Default false: every
+   * whitespace run, newlines included, collapses to one space. Opt in ONLY
+   * for a block whose entries are not line-tagged: the collapse exists
+   * because a `[direction by Name]` line prefix can be spoofed by a newline
+   * inside the content (see the function comment), so a multiline entry must
+   * never share a block with tagged lines. Angle brackets are stripped in
+   * both modes — that, not the collapse, is what keeps the fence closed.
+   */
+  multiline?: boolean;
+}
+
+/** Appended to an entry `untrustedEntryContent` cut, so the cut is visible in the prompt. */
+export const TRUNCATION_MARK = ' [cut here]';
+
 /**
  * Clean one untrusted message body for the quarantine blocks below: strip
  * angle brackets (no fake tags), collapse ALL whitespace — including newlines
@@ -230,12 +255,19 @@ export function renderRequesterTag(userName: string | null | undefined): string 
  * (PR #626 review). Exported so other untrusted-member-content renderers
  * (e.g. tools.ts's list_projects, issue #646) reuse the exact same
  * quarantine discipline rather than a parallel, driftable copy.
+ *
+ * The cap and the collapse are caller-adjustable (`UntrustedEntryOptions`)
+ * because a module rendering a 12,000-character skill through this helper
+ * used to get 300 characters on one line, silently: its own `.slice(0, cap)`
+ * after the call could only ever shorten further (WattoBot #181).
  */
-export function untrustedEntryContent(content: string): string {
-  return content
-    .replace(/[<>]/g, ' ')
-    .replace(/[\s\u0085]+/g, ' ')
-    .slice(0, 300);
+export function untrustedEntryContent(content: string, opts: UntrustedEntryOptions = {}): string {
+  const maxChars = opts.maxChars ?? 300;
+  const fenced = content.replace(/[<>]/g, ' ');
+  const shaped = opts.multiline
+    ? fenced.replace(/\r\n?|[\u0085\u2028\u2029\v\f]/g, '\n')
+    : fenced.replace(/[\s\u0085]+/g, ' ');
+  return shaped.length > maxChars ? shaped.slice(0, maxChars) + TRUNCATION_MARK : shaped;
 }
 
 /**

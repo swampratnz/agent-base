@@ -34,6 +34,7 @@
   "systemPrompt.test.ts": 4,
   "textAttachment.test.ts": 4,
   "toolLockdown.test.ts": 8,
+  "untrustedEntryContent.test.ts": 1,
   "whatsappCloudWire.test.ts": 8,
   "whatsappLidMap.test.ts": 2,
   "whatsappWire.test.ts": 1
