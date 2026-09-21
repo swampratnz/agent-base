@@ -72,6 +72,13 @@ export const llmSlice = {
   // any windowed history entry meets this floor. Same default/validation
   // shape as KNOWLEDGE_SHORTCUT_THRESHOLD, the precedent this mirrors.
   AGENT_WEB_SEARCH_DEDUP_SIMILARITY_THRESHOLD: z.coerce.number().min(0).max(1).default(0.9),
+  // The tier from which the SDK's built-in WebSearch is granted (WattoBot
+  // #100). 'admin' is the pre-existing behaviour: admin and super_admin turns
+  // get the built-in, member/guest never do. 'none' withholds it from every
+  // tier, for a module that ships its own search tool: a built-in the module
+  // cannot see runs outside its fence, footer, provenance set and budget, so
+  // the module rather than the base decides whether it exists at all.
+  AGENT_WEB_SEARCH_TIER: z.enum(['none', 'admin', 'super_admin']).default('admin'),
   // Wires the SDK's Agent Skills mechanism (issue #741): when on,
   // buildQueryOptions (agent/core.ts) adds 'Skill' to the base tools array
   // and loads the repo-bundled agent/skills/ plugin directory (the skills

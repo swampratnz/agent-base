@@ -86,7 +86,8 @@ plainly, and the claims below were corrected after an adversarial review found
 the first version both under-gated and overstated:
 
 - **Unarmed, a super-admin turn is identical to an admin turn:** `['WebSearch']`
-  only, with `Task`/`WebFetch` disallowed. The **grant itself** is conditional
+  only (or nothing at all under `AGENT_WEB_SEARCH_TIER=none`, which withholds
+  the built-in from every tier), with `Task`/`WebFetch` disallowed. The **grant itself** is conditional
   on arming (`core.ts`'s `fullBuiltins`). The first version gated only
   `Bash`/`Write`/`Edit`/`NotebookEdit`, which left `Read` + `WebFetch` granted
   and auto-approved in every super-admin turn — a read-anything-then-

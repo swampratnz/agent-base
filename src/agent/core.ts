@@ -29,7 +29,7 @@ import {
 } from '../storage/repository.js';
 import { ALL_BUILTIN_TOOLS, isMutatingArmed, MUTATING_BUILTIN_TOOLS } from './builtinTools.js';
 import { runtimeSecrets } from './secrets.js';
-import { finalizeTurnState, type TurnStateBag } from './turnState.js';
+import { finalizeTurnState, type BuiltinWebSearchUse, type TurnStateBag } from './turnState.js';
 import { getCodeAnswersPolicy } from '../storage/policyStore.js';
 import { queuePendingAlert } from '../pendingAlertQueue.js';
 import {
@@ -419,9 +419,14 @@ export function buildQueryOptions(
   conversationId: string,
   platform: Platform = 'discord',
   actorUserId: string = '',
+  onWebSearch?: (use: BuiltinWebSearchUse) => void,
 ) {
-  // Web search is a privileged capability: admins and super admins only.
-  const webSearch = atLeast(role, 'admin');
+  // Web search is a privileged capability: admin+ by default, raisable to
+  // super_admin only, or withheld from every tier with
+  // AGENT_WEB_SEARCH_TIER=none (WattoBot #100). Every branch below that
+  // grants, pre-approves, disallows or hooks WebSearch keys off this one
+  // boolean, so 'none' removes the built-in and its hooks together.
+  const webSearch = config.llm.webSearchTier !== 'none' && atLeast(role, config.llm.webSearchTier);
   // The full Agent SDK built-in surface is super-admin only, by the owner's
   // explicit decision (community-agent#1405 follow-up), and only inside an
   // ARMED window. Every other tier — and an UNARMED super admin — keeps the
@@ -606,10 +611,55 @@ export function buildQueryOptions(
                 ],
               },
             ],
+            // Report each built-in WebSearch that actually ran to the caller
+            // (WattoBot #100): the query and the result URLs, read from the
+            // SDK's own PostToolUse payload. `execTurn` collects them onto
+            // `turnState.builtinWebSearches` so a module can fence, footer
+            // and attribute results that never crossed its tool wrapper.
+            // Absent when no sink is supplied (the synthetic test call sites).
+            ...(webSearch && onWebSearch
+              ? {
+                  PostToolUse: [
+                    {
+                      matcher: 'WebSearch',
+                      hooks: [
+                        async (input: unknown): Promise<HookJSONOutput> => {
+                          onWebSearch(builtinWebSearchUse(input));
+                          return { continue: true };
+                        },
+                      ],
+                    },
+                  ],
+                }
+              : {}),
           },
         }
       : {}),
   };
+}
+
+/**
+ * Pull the query and result URLs out of a WebSearch PostToolUse payload. The
+ * shape is the SDK's `WebSearchOutput` (sdk-tools.d.ts): `results` mixes hit
+ * groups (`{ content: [{ title, url }] }`) with plain commentary strings, so
+ * everything is read defensively and an unexpected shape yields an empty
+ * URL list rather than a thrown hook.
+ */
+export function builtinWebSearchUse(input: unknown): BuiltinWebSearchUse {
+  const hook = input as
+    { tool_input?: { query?: unknown }; tool_response?: { results?: unknown } } | null | undefined;
+  const query = typeof hook?.tool_input?.query === 'string' ? hook.tool_input.query : '';
+  const urls: string[] = [];
+  const results = Array.isArray(hook?.tool_response?.results) ? hook.tool_response.results : [];
+  for (const group of results) {
+    const content = (group as { content?: unknown } | null)?.content;
+    if (!Array.isArray(content)) continue;
+    for (const hit of content) {
+      const url = (hit as { url?: unknown } | null)?.url;
+      if (typeof url === 'string') urls.push(url);
+    }
+  }
+  return { query, urls };
 }
 
 /**
@@ -1035,6 +1085,10 @@ async function execTurn(
   // the old false/null/[] initializers.
   const turnState: ToolServerTurnState = {};
   const toolServer = buildToolServer(caller, adapter, getAdapter, turnState);
+  // Built-in WebSearch runs this turn, reported by the PostToolUse hook
+  // buildQueryOptions attaches (WattoBot #100); surfaced on the success bag
+  // below under the same absent-not-empty discipline as the module keys.
+  const webSearches: BuiltinWebSearchUse[] = [];
 
   // Text of the assistant message currently being streamed. Reset per
   // assistant message so tool-use narration from earlier turns never leaks
@@ -1085,6 +1139,7 @@ async function execTurn(
               caller.conversationId,
               caller.platform,
               caller.userId,
+              (use) => webSearches.push(use),
             ),
             abortController,
           },
@@ -1254,7 +1309,10 @@ async function execTurn(
   // registered finalizers (agent/communityTurnState.ts) decide which keys
   // surface; an empty bag writes no `turnState` key at all, preserving the
   // absent-not-empty discipline of the fields it replaced.
-  const bag = finalizeTurnState(turnState);
+  const bag: Partial<TurnStateBag> = {
+    ...finalizeTurnState(turnState),
+    ...(webSearches.length > 0 ? { builtinWebSearches: webSearches } : {}),
+  };
   return {
     ok: true,
     resumeFailed: false,

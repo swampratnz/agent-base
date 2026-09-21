@@ -50,6 +50,21 @@ export interface TurnStateBag {
   knowledgeGapCluster?: CrossedKnowledgeGapCluster;
   /** Newly-stale served entry ids — read by the router's stale-knowledge handler. */
   staleKnowledgeAlertIds?: number[];
+  /**
+   * Every built-in WebSearch the SDK ran this turn, oldest first (WattoBot
+   * #100). The one key BASE writes: core.ts records it from the PostToolUse
+   * hook it attaches beside the WebSearch rate cap, because a built-in never
+   * passes through a module's tool wrapper, so without this a module could
+   * neither fence, footer nor attribute what the search returned. Absent when
+   * none ran, like every other key here.
+   */
+  builtinWebSearches?: readonly BuiltinWebSearchUse[];
+}
+
+/** One built-in WebSearch call: the query the model sent and the URLs the SDK returned. */
+export interface BuiltinWebSearchUse {
+  query: string;
+  urls: string[];
 }
 
 /**
