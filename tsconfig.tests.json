@@ -102,6 +102,7 @@
     "tests/textAttachment.test.ts",
     "tests/textChunk.test.ts",
     "tests/toolLockdown.test.ts",
+    "tests/toolSchemaRefusal.test.ts",
     "tests/untrustedEntryContent.test.ts",
     "tests/webSearchTier.test.ts",
     "tests/webSearchTierNone.test.ts",

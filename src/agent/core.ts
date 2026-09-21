@@ -40,7 +40,7 @@ import {
   renderRequesterTag,
 } from './systemPrompt.js';
 import { selectPersona } from './personaRegistry.js';
-import { buildToolServer, toolServerName } from './toolServer.js';
+import { buildToolServer, registeredToolIds, toolServerName } from './toolServer.js';
 import type { ToolServerTurnState } from './turnState.js';
 import { flaggedToolPredicates } from './featureFlags.js';
 import {
@@ -1067,7 +1067,27 @@ async function* imagePromptStream(
  */
 class AgentTurnTimeoutError extends Error {}
 
-async function execTurn(
+/**
+ * Thrown from inside the SDK message loop when the `init` message advertises
+ * none (or not all) of the registered tools this turn was allowed — the
+ * signature of a refused tool schema taking the whole server down (WattoBot
+ * #105). Caught by `execTurn`'s catch and turned into a logged, `ok: false`
+ * turn rather than a toolless answer reported as success.
+ */
+class ToolInventoryError extends Error {
+  constructor(
+    readonly missing: readonly string[],
+    readonly servers: ReadonlyArray<{ name: string; status: string }>,
+  ) {
+    super(`SDK init advertised none of: ${missing.join(', ')}`);
+    this.name = 'ToolInventoryError';
+  }
+}
+
+// Exported for tests, like `buildQueryOptions`: it is the one place the SDK
+// message stream is interpreted, and the #105 inventory check can only be
+// proven against a stream.
+export async function execTurn(
   caller: CallerContext,
   prompt: string,
   systemPrompt: string,
@@ -1117,6 +1137,26 @@ async function execTurn(
   // upgrade that renames or drops it fails CI instead of the abort silently
   // becoming a no-op.
   const abortController = new AbortController();
+  const options = buildQueryOptions(
+    caller.role,
+    systemPrompt,
+    // Keyed by the module-registered MCP server name (the same name
+    // that roots the `mcp__<name>__*` ids in allowedTools) — never a
+    // hard-coded literal here in base.
+    { [toolServerName()]: toolServer },
+    resumeSession,
+    caller.conversationId,
+    caller.platform,
+    caller.userId,
+    (use) => webSearches.push(use),
+  );
+  // The registered tools this turn was allowed: every one of them must come
+  // back in the SDK's `init` message, or the server was dropped (WattoBot
+  // #105). Intersected with the registry so a tier list naming a tool the
+  // module never registered stays that module's own inconsistency, not a
+  // refused turn.
+  const registeredIds = registeredToolIds();
+  const expectedTools = options.allowedTools.filter((id) => registeredIds.has(id));
   try {
     await Promise.race([
       (async () => {
@@ -1127,26 +1167,24 @@ async function execTurn(
           // config.discord.image / DiscordAdapter.maybeFetchImageAttachment)
           // switches this to the single-message async-iterable form instead.
           prompt: image ? imagePromptStream(prompt, image) : prompt,
-          options: {
-            ...buildQueryOptions(
-              caller.role,
-              systemPrompt,
-              // Keyed by the module-registered MCP server name (the same name
-              // that roots the `mcp__<name>__*` ids in allowedTools) — never a
-              // hard-coded literal here in base.
-              { [toolServerName()]: toolServer },
-              resumeSession,
-              caller.conversationId,
-              caller.platform,
-              caller.userId,
-              (use) => webSearches.push(use),
-            ),
-            abortController,
-          },
+          options: { ...options, abortController },
         })) {
           switch (message.type) {
             case 'system':
-              if (message.subtype === 'init') sessionId = message.session_id;
+              if (message.subtype === 'init') {
+                sessionId = message.session_id;
+                // The CLI emits `init` before its first model call, so refusing
+                // here costs no tokens. A registered tool the init does not
+                // advertise means the server never attached — on CLI 2.1.274
+                // one refused schema (see toolServer.ts REFUSED_SCHEMA_KEYWORDS)
+                // does exactly that while still reporting the server connected.
+                const advertised = new Set(message.tools);
+                const missing = expectedTools.filter((id) => !advertised.has(id));
+                if (missing.length > 0) {
+                  abortController.abort();
+                  throw new ToolInventoryError(missing, message.mcp_servers);
+                }
+              }
               break;
             case 'assistant': {
               const content = (message as { message?: { content?: Array<{ type: string; text?: string }> } })
@@ -1235,6 +1273,24 @@ async function execTurn(
       }),
     ]);
   } catch (err) {
+    if (err instanceof ToolInventoryError) {
+      logger.error(
+        {
+          conversationId: caller.conversationId,
+          missingTools: err.missing,
+          mcpServers: err.servers,
+        },
+        'Agent turn refused: the SDK advertised none of the registered tools it was given — a tool schema ' +
+          'was most likely refused and the whole server dropped (#105); answering without tools would be wrong',
+      );
+      noteUsageLimitOutcome(false, adapter, caller.conversationId, getAdapter);
+      return {
+        ok: false,
+        resumeFailed: false,
+        text: notice('internalErrorReply'),
+        fallbackNoticeId: 'internalErrorReply',
+      };
+    }
     if (err instanceof AgentTurnTimeoutError) {
       logger.error(
         { conversationId: caller.conversationId, timeoutMs: config.behaviour.agentTurnTimeoutMs },
