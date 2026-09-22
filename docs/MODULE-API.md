@@ -553,6 +553,7 @@ export interface TurnStateBag {
   humanHelpRequested?: boolean;
   knowledgeGapCluster?: CrossedKnowledgeGapCluster;
   staleKnowledgeAlertIds?: number[];
+  builtinWebSearches?: readonly BuiltinWebSearchUse[];   // written by BASE, see below
 }
 export type TurnStateFinalizer = (turnState: ToolServerTurnState) => Partial<TurnStateBag>;
 registerTurnStateFinalizer(finalizer: TurnStateFinalizer): void;
@@ -569,6 +570,13 @@ read. It ships no tool handlers at all, so WRITING them is still entirely a
 module's job — every key stays optional and absent-not-zero, and a module with
 no rating or knowledge-search tool simply never fires those handlers. Modules
 add their own keys by the same declaration merging.
+
+`builtinWebSearches` is the one key base itself writes: every built-in
+`WebSearch` the SDK ran this turn, as `{ query, urls }`, recorded from the
+PostToolUse hook `core.ts` attaches beside the WebSearch rate cap. A built-in
+never crosses a module's tool wrapper, so this is how a module fences, footers
+and attributes its results. `AGENT_WEB_SEARCH_TIER=none` withholds the
+built-in from every tier for a module that ships its own search tool.
 
 Finalizers run on the **genuine-success path only**, preserving the "never set
 on a fallback or error reply" contract of the hardcoded fields they replaced.

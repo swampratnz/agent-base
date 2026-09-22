@@ -85,6 +85,7 @@ function buildConfig(env: ParsedEnv) {
       fallbackModel: env.AGENT_MODEL_FALLBACK,
       maxTurns: env.AGENT_MAX_TURNS,
       memberMaxTurns: env.AGENT_MAX_TURNS_MEMBER,
+      webSearchTier: env.AGENT_WEB_SEARCH_TIER,
       webSearchRateLimitPerHour: env.AGENT_WEB_SEARCH_RATE_LIMIT_PER_HOUR,
       webSearchDedupWindowSeconds: env.AGENT_WEB_SEARCH_DEDUP_WINDOW_SECONDS,
       webSearchDedupHistorySize: env.AGENT_WEB_SEARCH_DEDUP_HISTORY_SIZE,
