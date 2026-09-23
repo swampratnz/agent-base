@@ -17,11 +17,30 @@ import { atLeast, type Tier } from './tiers.js';
  * propagates, exactly as a failed `getMemberRole` read does, so every caller's
  * existing fail posture applies unchanged.
  */
-export type AuthorityResolver = (who: {
-  platform: Platform;
-  userId: string;
-  seat: Tier;
-}) => Tier | Promise<Tier>;
+export type AuthorityResolver = (
+  who: {
+    platform: Platform;
+    userId: string;
+    seat: Tier;
+  } & AuthorityScope,
+) => Tier | Promise<Tier>;
+
+/**
+ * Where the standing is being asked from (agent-base #65), so a module can
+ * narrow per surface: an admin of one customer's Discord server is not an
+ * admin of another's. Both fields are optional and present only when the call
+ * site knows them; the resolver must treat an absent field as UNKNOWN, never
+ * as "the home guild".
+ *
+ * Passed by the router's role step, slash dispatch, moderation exemption, the
+ * Discord rejoin re-mute skip and the Discord media gates.
+ */
+export interface AuthorityScope {
+  /** The conversation asked from: a Discord channel or thread id, or a WhatsApp JID. */
+  conversationId?: string;
+  /** The Discord guild it arrived in. Absent for a DM, for WhatsApp, and where unknown. */
+  guildId?: string;
+}
 
 let authorityResolver: AuthorityResolver | null = null;
 
@@ -49,10 +68,20 @@ const TIERS: readonly Tier[] = ['guest', 'member', 'admin', 'super_admin'];
  * moderation exemption, the Discord re-mute-on-rejoin skip, and the adapters'
  * command gates. With no resolver registered the result is the seat, unchanged.
  */
-export async function resolveRole(platform: Platform, userId: string): Promise<Tier> {
+export async function resolveRole(
+  platform: Platform,
+  userId: string,
+  scope: AuthorityScope = {},
+): Promise<Tier> {
   const seat = await resolveSeat(platform, userId);
   if (!authorityResolver) return seat;
-  const narrowed = await authorityResolver({ platform, userId, seat });
+  const narrowed = await authorityResolver({
+    platform,
+    userId,
+    seat,
+    ...(scope.conversationId ? { conversationId: scope.conversationId } : {}),
+    ...(scope.guildId ? { guildId: scope.guildId } : {}),
+  });
   if (!TIERS.includes(narrowed)) return 'guest';
   return atLeast(seat, narrowed) ? narrowed : seat;
 }
@@ -68,8 +97,12 @@ async function resolveSeat(platform: Platform, userId: string): Promise<Tier> {
  * muted). The one predicate both `Moderator.scan` and the Discord adapter's
  * re-mute-on-rejoin check use, so the two cannot disagree about who is exempt.
  */
-export async function isModerationExempt(platform: Platform, userId: string): Promise<boolean> {
-  return atLeast(await resolveRole(platform, userId), 'admin');
+export async function isModerationExempt(
+  platform: Platform,
+  userId: string,
+  scope: AuthorityScope = {},
+): Promise<boolean> {
+  return atLeast(await resolveRole(platform, userId, scope), 'admin');
 }
 
 export function isSuperAdmin(platform: Platform, userId: string): boolean {

@@ -64,6 +64,8 @@
     "tests/failClosedMessages.test.ts",
     "tests/fleetHeartbeat.test.ts",
     "tests/gatedNotice.test.ts",
+    "tests/guildAdmission.test.ts",
+    "tests/guildAdmissionDefault.test.ts",
     "tests/healthState.test.ts",
     "tests/interactionsOrg.test.ts",
     "tests/interactionsOrgUnregistered.test.ts",

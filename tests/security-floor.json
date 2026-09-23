@@ -6,6 +6,8 @@
   "createAgent.test.ts": 2,
   "failClosedMessages.test.ts": 1,
   "gatedNotice.test.ts": 6,
+  "guildAdmission.test.ts": 5,
+  "guildAdmissionDefault.test.ts": 2,
   "healthState.test.ts": 1,
   "interactionsOrg.test.ts": 2,
   "jobsRegistry.test.ts": 1,

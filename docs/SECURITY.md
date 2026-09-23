@@ -164,7 +164,23 @@ A module may register one `resolveAuthority` hook (MODULE-API.md § Authority
 resolver) that NARROWS the stored seat, for a deployment whose seats are wider
 than a person's real standing. `resolveRole` clamps its answer to the seat, so
 it can lower a tier and never raise one: tiers still come only from env and
-storage.
+storage. The hook is told where it is being asked from (`AuthorityScope`: the
+conversation and, on Discord, the guild), so a consumer can narrow per server.
+
+**Guild admission.** The Discord adapter hears `DISCORD_GUILD_ID` and, when a
+module registers `admitGuild` (MODULE-API.md § Discord guild admission), any
+guild that hook answers exactly `true` for. A throwing hook admits nothing. An
+unadmitted guild's message is dropped before anything runs, and its slash
+commands are not dispatched unless the module marked them `preAdmission`.
+Everything that acts on the configured guild stays home-only, admitted guilds
+included: joins, leaves, auto-enroll, welcome, auto-moderation and the
+membership-scope cache. Residual risk the consumer owns: `performAdminAction`
+and `conversationsForUser` still resolve the configured guild, so an admin tool
+invoked from an admitted guild acts on the home guild, and a recall scope
+computed for a caller there is their home-guild scope. A consumer admitting
+other guilds should narrow standing in them through `resolveAuthority` (which
+now receives the guild) so that no caller there holds the admin tier until
+admin actions are guild-aware.
 
 Tier lists are **derived from tool registrations**, not maintained alongside
 them. A hand-mirrored list drifts, and a tool registered on the server but

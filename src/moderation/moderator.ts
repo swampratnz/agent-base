@@ -4,6 +4,7 @@ import { logger } from '../logger.js';
 import { makeAlertSlotReserver } from '../notifications.js';
 import { notice, isRegisteredLanguage } from '../strings/catalogue.js';
 import type { Platform } from '../platforms/types.js';
+import type { AuthorityScope } from '../auth/roles.js';
 import {
   recordBackgroundJobCost,
   type LanguagePreference,
@@ -18,6 +19,8 @@ export interface ScanContext {
   text: string;
   /** The channel the message was posted in — where the public warning goes. */
   channelId: string;
+  /** The Discord guild it was posted in, handed to the exemption check (agent-base #65). */
+  guildId?: string;
 }
 
 /** The guild/channel scope a classification was made in — see `makeClassifier`'s cache. */
@@ -70,7 +73,7 @@ export interface ModeratorDeps {
   alertRateLimitPerHour: number;
   classify: Classifier;
   /** True for admins/super admins, who are never warned or muted. */
-  isExempt: (platform: Platform, userId: string) => Promise<boolean>;
+  isExempt: (platform: Platform, userId: string, scope?: AuthorityScope) => Promise<boolean>;
   /** Standing language preference (issue #189), read to pick the warn/block DM's language. */
   getLanguagePreference: (platform: Platform, userId: string) => Promise<LanguagePreference>;
   /**
@@ -185,7 +188,13 @@ export class Moderator {
   async scan(ctx: ScanContext): Promise<void> {
     if (!this.deps.enabled) return;
     if (!ctx.text || !ctx.text.trim()) return;
-    if (await this.deps.isExempt(ctx.platform, ctx.userId)) return;
+    if (
+      await this.deps.isExempt(ctx.platform, ctx.userId, {
+        conversationId: ctx.channelId,
+        ...(ctx.guildId ? { guildId: ctx.guildId } : {}),
+      })
+    )
+      return;
 
     let hit: Detection | null;
     try {

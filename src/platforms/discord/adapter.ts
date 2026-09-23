@@ -49,7 +49,13 @@ import { notice, isRegisteredLanguage } from '../../strings/catalogue.js';
 import { getCodeAnswersPolicy } from '../../storage/policyStore.js';
 import { createModerator, type ModerationEnforcer, type Moderator } from '../../moderation/index.js';
 import { atLeast } from '../../auth/rbac.js';
-import { isModerationExempt, isSuperAdmin, resolveRole, superAdminIds } from '../../auth/roles.js';
+import {
+  isModerationExempt,
+  isSuperAdmin,
+  resolveRole,
+  superAdminIds,
+  type AuthorityScope,
+} from '../../auth/roles.js';
 import {
   autoEnrollMemberWithAudit,
   countActiveWarnings,
@@ -62,7 +68,8 @@ import {
 import { shouldNotifyMutedRoleOverwriteFailed } from '../../mutedRoleAlertNotice.js';
 import { takeReplyMapping } from '../../replyRetraction.js';
 import { chunkText } from '../textChunk.js';
-import { handleInteraction, registerSlashCommands } from './slashDispatch.js';
+import { handleInteraction, registerGuildCommands, registerSlashCommands } from './slashDispatch.js';
+import { admitsGuild, hasGuildAdmitter, isHomeGuild } from './guildAdmission.js';
 import {
   paramString,
   type AdapterTextPack,
@@ -252,13 +259,12 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
       config.moderation.enabled
     ) {
       this.client.on(Events.MessageDelete, (message) => {
-        if (
-          config.discord.archiveAllMessages &&
+        if (config.discord.archiveAllMessages) {
           this.inArchiveScope(message.guildId, this.scopeChannelId(message.channel, message.channelId))
-        ) {
-          deleteInteractionByMessageId('discord', message.channelId, message.id).catch((err) =>
-            logger.warn({ err, messageId: message.id }, 'Stored-message delete failed'),
-          );
+            .then((inScope) =>
+              inScope ? deleteInteractionByMessageId('discord', message.channelId, message.id) : undefined,
+            )
+            .catch((err) => logger.warn({ err, messageId: message.id }, 'Stored-message delete failed'));
         }
         if (config.behaviour.autoRetractReplyEnabled) {
           this.retractReplyIfMapped(message.channelId, message.id).catch((err) =>
@@ -268,13 +274,14 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
       });
       this.client.on(Events.MessageBulkDelete, (messages) => {
         for (const message of messages.values()) {
-          if (
-            config.discord.archiveAllMessages &&
+          if (config.discord.archiveAllMessages) {
             this.inArchiveScope(message.guildId, this.scopeChannelId(message.channel, message.channelId))
-          ) {
-            deleteInteractionByMessageId('discord', message.channelId, message.id).catch((err) =>
-              logger.warn({ err, messageId: message.id }, 'Stored-message bulk delete failed'),
-            );
+              .then((inScope) =>
+                inScope ? deleteInteractionByMessageId('discord', message.channelId, message.id) : undefined,
+              )
+              .catch((err) =>
+                logger.warn({ err, messageId: message.id }, 'Stored-message bulk delete failed'),
+              );
           }
           if (config.behaviour.autoRetractReplyEnabled) {
             this.retractReplyIfMapped(message.channelId, message.id).catch((err) =>
@@ -371,8 +378,22 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
       // block message handling. Off by default.
       if (config.discord.slashCommandsEnabled) {
         void registerSlashCommands(this.client);
+        // Multi-guild (agent-base #65): converge every OTHER guild the bot
+        // sits in to what its admission says it should offer. Only with a
+        // module's admitGuild hook — without one, nothing but the home guild
+        // is ever registered, exactly as before.
+        if (hasGuildAdmitter()) void this.registerOtherGuilds();
       }
     });
+    // A server that adds the bot while it runs gets its pre-admission
+    // commands (a module's `/claim`) straight away. Same gate as above.
+    if (config.discord.slashCommandsEnabled && hasGuildAdmitter()) {
+      this.client.on(Events.GuildCreate, (guild) => {
+        this.registerGuild(guild.id).catch((err) =>
+          logger.warn({ err, guildId: guild.id }, 'Slash command registration for a new guild failed'),
+        );
+      });
+    }
     // Steady-state signal for /healthz + disconnect alerting — discord.js
     // handles gateway resume internally, but a shard going down means we're
     // not receiving messages, which is what these signals care about.
@@ -414,8 +435,17 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
 
     const isDM = message.channel.type === ChannelType.DM;
 
-    // Restrict to the configured guild (DMs always allowed).
-    if (!isDM && message.guildId !== config.discord.guildId) return;
+    // SECURITY: restrict to admitted guilds (DMs always allowed): the
+    // configured guild, plus any guild a module's admitGuild hook admits
+    // (agent-base #65). An unadmitted guild's message stops HERE, before the
+    // moderation scan, the media fetches and the handler, so it leaves no
+    // interactions row and no moderation action behind.
+    if (!isDM && !(await admitsGuild(message.guildId))) return;
+    const home = !isDM && isHomeGuild(message.guildId);
+    const scope: AuthorityScope = {
+      conversationId: message.channelId,
+      ...(message.guildId ? { guildId: message.guildId } : {}),
+    };
 
     // Optional channel allowlist. A message posted in a thread reports the
     // thread's own id as `channelId`, not its parent's, so gating on that id
@@ -426,9 +456,12 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
     // resolution is applied to the delete/edit-honouring listeners via
     // `scopeChannelId`, so a thread message that is archived is also honoured
     // when deleted/edited.
+    //
+    // The allowlist names HOME-guild channels, so it binds the home guild
+    // only; an admitted guild is admitted whole, by the module's own choice.
     const gateChannelId = this.scopeChannelId(message.channel, message.channelId);
     if (
-      !isDM &&
+      home &&
       config.discord.allowedChannelIds.length > 0 &&
       !config.discord.allowedChannelIds.includes(gateChannelId)
     ) {
@@ -451,7 +484,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
     let text = this.cleanContent(message.content);
     const voiceAttachment = message.attachments.size === 1 ? message.attachments.first() : undefined;
     if (!text && voiceAttachment && voiceAttachment.duration != null) {
-      text = await this.maybeTranscribeVoiceMessage(voiceAttachment, message.author.id);
+      text = await this.maybeTranscribeVoiceMessage(voiceAttachment, message.author.id, scope);
       if (text) {
         await this.maybeSendVoiceLanguageCaveat(message.author.id);
       }
@@ -465,7 +498,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
     // sent alongside a caption, not instead of one.
     const image =
       voiceAttachment && voiceAttachment.duration == null
-        ? await this.maybeFetchImageAttachment(voiceAttachment, message.author.id)
+        ? await this.maybeFetchImageAttachment(voiceAttachment, message.author.id, scope)
         : undefined;
 
     // Discord text-attachment input (opt-in, TEXT_INPUT_ENABLED). Keyed on the
@@ -487,7 +520,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
     // text — where `image` bypasses both. Resolved BEFORE the scan below for
     // the same reason the voice transcript is.
     if (!image && voiceAttachment && voiceAttachment.duration == null) {
-      const attached = await this.maybeReadTextAttachment(voiceAttachment, message.author.id);
+      const attached = await this.maybeReadTextAttachment(voiceAttachment, message.author.id, scope);
       if (attached) text = text ? `${text}\n\n${attached}` : attached;
     }
 
@@ -496,7 +529,10 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
     // failure can never block or delay normal handling. DMs aren't scanned —
     // muting is a guild concept. A no-op unless DISCORD_MODERATION_ENABLED.
     // `text` already reflects a transcribed voice message, if any (above).
-    if (!isDM) {
+    // Home guild only: every enforcement (mute, the muted role, the admin
+    // alert channel) acts on the configured guild, so scanning an admitted
+    // guild would mute its members in a server they never posted in.
+    if (home) {
       void this.moderator
         .scan({
           platform: 'discord',
@@ -504,6 +540,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
           userName: message.member?.displayName ?? message.author.username,
           text,
           channelId: message.channelId,
+          guildId: message.guildId!,
         })
         .catch((err) => logger.warn({ err }, 'Moderation scan failed'));
     }
@@ -521,6 +558,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
       text,
       ...(image ? { image } : {}),
       isDirect: isDM,
+      ...(scope.guildId ? { guildId: scope.guildId } : {}),
       addressedToBot: mentioned || repliedToBot,
       // Belt-and-braces alongside the early `message.author.bot` return above
       // (issue #477): a webhook-posted message doesn't always set
@@ -563,13 +601,17 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
    * transcript is granted exactly the caller's own tier's tool set, never
    * more.
    */
-  private async maybeTranscribeVoiceMessage(attachment: Attachment, senderId: string): Promise<string> {
+  private async maybeTranscribeVoiceMessage(
+    attachment: Attachment,
+    senderId: string,
+    scope: AuthorityScope,
+  ): Promise<string> {
     if (!config.discord.voice.enabled) return '';
     const minRole = config.discord.voice.minRole;
     if (minRole === 'super_admin') {
       if (!isSuperAdmin('discord', senderId)) return '';
     } else {
-      const role = await resolveRole('discord', senderId);
+      const role = await resolveRole('discord', senderId, scope);
       if (!atLeast(role, minRole)) return '';
     }
     const seconds = attachment.duration ?? 0;
@@ -640,13 +682,14 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
   private async maybeFetchImageAttachment(
     attachment: Attachment,
     senderId: string,
+    scope: AuthorityScope,
   ): Promise<IncomingMessage['image'] | undefined> {
     if (!config.discord.image.enabled) return undefined;
     const minRole = config.discord.image.minRole;
     if (minRole === 'super_admin') {
       if (!isSuperAdmin('discord', senderId)) return undefined;
     } else {
-      const role = await resolveRole('discord', senderId);
+      const role = await resolveRole('discord', senderId, scope);
       if (!atLeast(role, minRole)) return undefined;
     }
     if (!reserveImageInputDaily(`discord:${senderId}`, config.discord.image.dailyLimitPerUser)) {
@@ -725,13 +768,14 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
   private async maybeReadTextAttachment(
     attachment: Attachment,
     senderId: string,
+    scope: AuthorityScope,
   ): Promise<string | undefined> {
     if (!config.discord.text.enabled) return undefined;
     const minRole = config.discord.text.minRole;
     if (minRole === 'super_admin') {
       if (!isSuperAdmin('discord', senderId)) return undefined;
     } else {
-      const role = await resolveRole('discord', senderId);
+      const role = await resolveRole('discord', senderId, scope);
       if (!atLeast(role, minRole)) return undefined;
     }
 
@@ -815,9 +859,15 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
     return botId ? content.replace(new RegExp(`<@!?${botId}>`, 'g'), '').trim() : content.trim();
   }
 
-  /** True when a message id belongs to the configured guild + allowed channels (archiving scope). */
-  private inArchiveScope(guildId: string | null, channelId: string): boolean {
-    if (guildId !== config.discord.guildId) return false;
+  /**
+   * True when a message belongs to an admitted guild and, in the home guild,
+   * an allowed channel (archiving scope). The same admission as
+   * `onDiscordMessage`, so every row an admitted guild's message wrote is
+   * honoured when that message is deleted or edited.
+   */
+  private async inArchiveScope(guildId: string | null, channelId: string): Promise<boolean> {
+    if (!(await admitsGuild(guildId))) return false;
+    if (!isHomeGuild(guildId)) return true;
     return (
       config.discord.allowedChannelIds.length === 0 || config.discord.allowedChannelIds.includes(channelId)
     );
@@ -846,7 +896,10 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
     newMessage: Message | PartialMessage,
   ): Promise<void> {
     if (
-      !this.inArchiveScope(newMessage.guildId, this.scopeChannelId(newMessage.channel, newMessage.channelId))
+      !(await this.inArchiveScope(
+        newMessage.guildId,
+        this.scopeChannelId(newMessage.channel, newMessage.channelId),
+      ))
     )
       return;
     const full = newMessage.partial ? await newMessage.fetch() : newMessage;
@@ -862,7 +915,12 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
     // unchanged text would be pure waste. `oldMessage.partial` means
     // discord.js can't guarantee the pre-edit content was cached, so an
     // unresolvable diff fails TOWARD scanning rather than silence.
-    if (config.moderation.enabled && (oldMessage.partial || oldMessage.content !== full.content)) {
+    // Home guild only, for the same reason as the create-path scan.
+    if (
+      config.moderation.enabled &&
+      isHomeGuild(full.guildId) &&
+      (oldMessage.partial || oldMessage.content !== full.content)
+    ) {
       void this.moderator
         .scan({
           platform: 'discord',
@@ -870,6 +928,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
           userName: full.member?.displayName ?? full.author.username,
           text: this.cleanContent(full.content),
           channelId: full.channelId,
+          guildId: full.guildId!,
         })
         .catch((err) => logger.warn({ err }, 'Moderation scan failed'));
     }
@@ -904,7 +963,11 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
    * this path.
    */
   private async onGuildMemberAdd(member: GuildMember): Promise<void> {
-    if (member.guild.id !== config.discord.guildId) return;
+    // SECURITY: home guild only, admitted or not (agent-base #65). A join
+    // elsewhere must not write the operator's roster, auto-enroll a
+    // deployment-wide member seat, send the operator's welcome, or re-mute
+    // in the configured guild.
+    if (!isHomeGuild(member.guild.id)) return;
 
     if (!member.user.bot) {
       await upsertRosterMember({
@@ -1047,7 +1110,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
    * should know.
    */
   private async remuteOnRejoinIfNeeded(member: GuildMember): Promise<void> {
-    if (await isModerationExempt('discord', member.id)) return;
+    if (await isModerationExempt('discord', member.id, { guildId: member.guild.id })) return;
     // Deliberately UNWINDOWED (no strikeWindowDays): this check exists to
     // close the leave/rejoin mute-evasion bypass, so it must see every
     // uncleared strike regardless of age — otherwise leaving and waiting out
@@ -1063,7 +1126,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
   }
 
   private async onGuildMemberRemove(member: GuildMember | PartialGuildMember): Promise<void> {
-    if (member.guild.id !== config.discord.guildId) return;
+    if (!isHomeGuild(member.guild.id)) return;
     if (member.user?.bot) return;
     // A full guild exit invalidates every scope entry for this user, so a
     // full delete (not a partial recompute) is correct — see docs/SECURITY.md
@@ -1092,7 +1155,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
     newChannel: DMChannel | NonThreadGuildBasedChannel,
   ): void {
     if (oldChannel.isDMBased() || newChannel.isDMBased()) return;
-    if (newChannel.guild.id !== config.discord.guildId) return;
+    if (!isHomeGuild(newChannel.guild.id)) return;
     if (!oldChannel.isTextBased() || !newChannel.isTextBased()) return;
     if (
       this.permissionOverwritesEqual(
@@ -1145,7 +1208,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
    * rather than risk silently treating a real revocation as unchanged.
    */
   private onGuildMemberUpdate(oldMember: GuildMember | PartialGuildMember, newMember: GuildMember): void {
-    if (newMember.guild.id !== config.discord.guildId) return;
+    if (!isHomeGuild(newMember.guild.id)) return;
     if (oldMember.partial || !this.roleIdSetsEqual(oldMember.roles.cache, newMember.roles.cache)) {
       this.membershipCache.delete(newMember.id);
     }
@@ -1158,7 +1221,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
    * free); clears the whole cache on a genuine `permissions` change.
    */
   private onGuildRoleUpdate(oldRole: Role, newRole: Role): void {
-    if (newRole.guild.id !== config.discord.guildId) return;
+    if (!isHomeGuild(newRole.guild.id)) return;
     if (oldRole.permissions.bitfield !== newRole.permissions.bitfield) {
       this.membershipCache.clear();
     }
@@ -1171,7 +1234,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
    * `onGuildRoleUpdate`.
    */
   private onGuildRoleDelete(role: Role): void {
-    if (role.guild.id !== config.discord.guildId) return;
+    if (!isHomeGuild(role.guild.id)) return;
     this.membershipCache.clear();
   }
 
@@ -1481,8 +1544,33 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
     if (!channel || !channel.isTextBased() || !('send' in channel) || channel.isDMBased()) {
       return false;
     }
+    // Home guild only, admitted guilds included (agent-base #65): this has no
+    // caller context, so it cannot tell an admin of the home guild from one
+    // of an admitted server, and a cross-server post is not its call.
     const guildId = 'guildId' in channel ? channel.guildId : undefined;
-    return guildId === config.discord.guildId;
+    return isHomeGuild(guildId);
+  }
+
+  /**
+   * Converge one guild's slash commands to what its admission says
+   * (agent-base #65): the full list in an admitted guild, only the
+   * `preAdmission` commands (a module's `/claim`) in any other. A module calls
+   * this right after a claim or a release so the change shows at once; the
+   * adapter calls it on boot for every guild it sits in and when it joins a
+   * new one. See `registerGuildCommands`.
+   */
+  async registerGuild(guildId: string): Promise<'admitted' | 'pre-admission' | 'skipped'> {
+    return registerGuildCommands(this.client, guildId);
+  }
+
+  /** Boot-time convergence of every non-home guild, one at a time; never throws. */
+  private async registerOtherGuilds(): Promise<void> {
+    for (const guildId of this.client.guilds.cache.keys()) {
+      if (isHomeGuild(guildId)) continue;
+      await this.registerGuild(guildId).catch((err) =>
+        logger.warn({ err, guildId }, 'Slash command registration for a guild failed'),
+      );
+    }
   }
 
   async performAdminAction(action: AdminAction): Promise<string> {
@@ -1915,7 +2003,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
    */
   private async onChannelCreate(channel: NonThreadGuildBasedChannel): Promise<void> {
     if (!config.moderation.enabled) return;
-    if (channel.guild.id !== config.discord.guildId) return;
+    if (!isHomeGuild(channel.guild.id)) return;
     if (!this.isMutableOverwriteChannel(channel)) return;
     const role = this.findMutedRole(channel.guild);
     if (!role) return;
