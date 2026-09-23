@@ -54,3 +54,18 @@ CREATE INDEX IF NOT EXISTS interactions_message_id_idx
 UPDATE interactions SET kind = 'ambient'
  WHERE kind = 'addressed' AND direction = 'inbound'
    AND addressed_to_bot = false AND is_direct = false;
+
+-- Organisation attribution (WattoBot #201). A consumer with tenants records
+-- whose turn each row was, so a per-organisation money query is a plain
+-- predicate on this column instead of a join through the consumer's own
+-- tables that a query can silently forget. Nullable with no default, so on a
+-- populated ledger this is a catalog-only change (no rewrite) and every row
+-- written before it stays NULL until the consumer backfills it
+-- (docs/MODULE-API.md § Interaction organisation). A single-tenant deployment
+-- never sets it. The index is partial for the same reason: NULL rows are
+-- never the subject of an organisation-scoped read.
+ALTER TABLE interactions ADD COLUMN IF NOT EXISTS org_id TEXT;
+
+CREATE INDEX IF NOT EXISTS interactions_org_idx
+  ON interactions (org_id, created_at DESC)
+  WHERE org_id IS NOT NULL;

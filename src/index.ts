@@ -111,6 +111,7 @@ export type { AdapterPolicyText, AdapterTextPack, PlatformAdapter } from './plat
 // manifest, same as provenance.
 export type { RuntimeSecretGetter } from './agent/secrets.js';
 export type { AuthorityResolver } from './auth/roles.js';
+export type { InteractionOrgResolver } from './storage/repository/interactions.js';
 
 // --- Alerts ------------------------------------------------------------------
 export type { AlertPriority } from './pendingAlertQueue.js';

@@ -65,6 +65,8 @@
     "tests/fleetHeartbeat.test.ts",
     "tests/gatedNotice.test.ts",
     "tests/healthState.test.ts",
+    "tests/interactionsOrg.test.ts",
+    "tests/interactionsOrgUnregistered.test.ts",
     "tests/jobsRegistry.test.ts",
     "tests/knowledgeCandidateDedupDegradation.test.ts",
     "tests/knowledgeDuplicateDegradation.test.ts",
