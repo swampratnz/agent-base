@@ -110,6 +110,8 @@ export type { AdapterPolicyText, AdapterTextPack, PlatformAdapter } from './plat
 // (`@swampratnz/agent-base/agent/secrets.js`) — a module registers through the
 // manifest, same as provenance.
 export type { RuntimeSecretGetter } from './agent/secrets.js';
+export type { AuthorityResolver } from './auth/roles.js';
+export type { InteractionOrgResolver } from './storage/repository/interactions.js';
 
 // --- Alerts ------------------------------------------------------------------
 export type { AlertPriority } from './pendingAlertQueue.js';

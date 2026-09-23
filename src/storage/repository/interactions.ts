@@ -38,10 +38,55 @@ export interface InteractionInput {
   messageId?: string;
   /** 'addressed' (to the bot / DM) vs 'ambient' channel chatter (issue #48). */
   kind?: 'addressed' | 'ambient';
+  /**
+   * The organisation this row belongs to, for a consumer with tenants
+   * (WattoBot #201). `undefined` asks the registered `InteractionOrgResolver`,
+   * if any; `null` records the row as deliberately unattributed without
+   * asking. Base never interprets the value.
+   */
+  orgId?: string | null;
+}
+
+/**
+ * A module's answer to "which organisation is this row?", for the rows the
+ * base writes itself (the router's inbound and outbound records) and any row a
+ * caller writes without an explicit `orgId`. Return `null`/`undefined` for
+ * "none". Registered once, through `AgentModule.resolveInteractionOrg`.
+ */
+export type InteractionOrgResolver = (
+  input: Readonly<InteractionInput>,
+) => string | null | undefined | Promise<string | null | undefined>;
+
+let interactionOrgResolver: InteractionOrgResolver | null = null;
+
+/** Install the resolver. Once per process, like every singleton registry. */
+export function registerInteractionOrgResolver(resolver: InteractionOrgResolver): void {
+  if (interactionOrgResolver) {
+    throw new Error('interaction organisation resolver already registered — it cannot be swapped after boot');
+  }
+  interactionOrgResolver = resolver;
+}
+
+/**
+ * The org_id a row is written with. A failing resolver records the row with
+ * NULL rather than dropping it, the same posture as a failed embedding: the
+ * audit record outranks its attribution, and a NULL row is visibly
+ * unattributed rather than silently credited to the wrong organisation.
+ */
+async function orgIdFor(input: InteractionInput): Promise<string | null> {
+  if (input.orgId !== undefined) return input.orgId || null;
+  if (!interactionOrgResolver) return null;
+  try {
+    return (await interactionOrgResolver(input)) || null;
+  } catch (err) {
+    logger.warn({ err }, 'Interaction organisation resolver failed; recording the row unattributed');
+    return null;
+  }
 }
 
 /** Persist one interaction, embedding its content for later semantic recall. */
 export async function recordInteraction(input: InteractionInput): Promise<void> {
+  const orgId = await orgIdFor(input);
   let embedding: number[] | null = null;
   try {
     embedding = await embed(input.content);
@@ -55,8 +100,8 @@ export async function recordInteraction(input: InteractionInput): Promise<void> 
       `INSERT INTO interactions
          (platform, conversation_id, user_id, user_name, role, direction,
           content, addressed_to_bot, is_direct, cost_usd, meta, embedding,
-          message_id, kind)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+          message_id, kind, org_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         input.platform,
         input.conversationId,
@@ -72,6 +117,7 @@ export async function recordInteraction(input: InteractionInput): Promise<void> 
         vec ? pgvector.toSql(vec) : null,
         input.messageId ?? null,
         input.kind ?? 'addressed',
+        orgId,
       ],
     );
 
@@ -84,6 +130,32 @@ export async function recordInteraction(input: InteractionInput): Promise<void> 
     logger.warn({ err }, 'Insert with embedding failed; retrying without vector');
     await insert(null);
   }
+}
+
+export interface OrgSpend {
+  /** Sum of `cost_usd` over the organisation's outbound rows in the window. */
+  costUsd: number;
+  /** How many outbound rows that is. */
+  replies: number;
+}
+
+/**
+ * ONE organisation's outbound spend over `[from, to)` (`to` omitted = up to
+ * now). The organisation is a required argument and must be non-empty, so
+ * this read cannot be called in a way that answers for the whole deployment;
+ * rows with a NULL org_id (pre-#201, or unattributed) are never counted.
+ */
+export async function orgSpend(orgId: string, window: { from: Date; to?: Date }): Promise<OrgSpend> {
+  if (!orgId) throw new Error('orgSpend: an organisation id is required');
+  const { rows } = await pool.query<{ cost: string; n: string }>(
+    `SELECT coalesce(sum(cost_usd), 0)::text AS cost, count(*)::text AS n
+       FROM interactions
+      WHERE org_id = $1 AND direction = 'outbound'
+        AND created_at >= $2::timestamptz
+        AND ($3::timestamptz IS NULL OR created_at < $3::timestamptz)`,
+    [orgId, window.from.toISOString(), window.to?.toISOString() ?? null],
+  );
+  return { costUsd: Number(rows[0].cost), replies: Number(rows[0].n) };
 }
 
 /**

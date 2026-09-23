@@ -99,10 +99,12 @@ surface — completeness is required of the composition, not of any one module.
 | `commands?` | command roster | **yes** |
 | `defaultBadWords?` | moderation term list | **yes** |
 | `personas?` | persona registry | **yes**, and exactly one entry must be `isDefault` |
+| `resolveAuthority?` | authority resolver (once per process) | no; absent, every path reads the raw seat |
+| `resolveInteractionOrg?` | interaction organisation resolver (once per process) | no; absent, rows without an explicit `orgId` get NULL |
 | `turnStateFinalizers?` · `policyKeys?` · `provenance?` · `purgeContributors?` · `preTurnIntercepts?` · `postTurnHandlers?` · `runtimeSecrets?` · `migrations?` | additive | no |
 
-The eight singleton rows plus `personas` are the nine `assertRegistrationsComplete()`
-probes; a composition missing any of them is refused with every gap named at
+The eight required singleton rows plus `personas` are the nine `assertRegistrationsComplete()`
+probes (`resolveAuthority` and `resolveInteractionOrg` are singletons too — two claimants are refused — but optional); a composition missing any of them is refused with every gap named at
 once. The additive rows are appended, and base owns the iteration order inside
 each (see the per-registry sections below).
 
@@ -458,6 +460,91 @@ Three properties are deliberate, and each has a `SECURITY:` test:
 This closes the gap PHASE-4-PERSONAL-AGENT.md §8.2 named: a module holding an
 OAuth refresh token registers a getter for it and the backstop covers every
 egress path, not just the send sites the module remembered to redact itself.
+
+### Authority resolver
+
+**live** (0.8.2). `src/auth/roles.ts`, registered through the manifest's
+`resolveAuthority` field.
+
+```ts
+export type AuthorityResolver = (who: {
+  platform: Platform;
+  userId: string;
+  seat: Tier; // env super admin, else community_users.role, else guest
+}) => Tier | Promise<Tier>;
+```
+
+A seat in `community_users` is **deployment-wide**. A consumer with tenants
+knows more: a person made `admin` by one customer organisation is not an admin
+of the operator's guild. `resolveRole` hands the resolved seat to this hook and
+returns its answer, so every base path that reads standing sees the narrowed
+tier: the router's turn tier (and through it `buildQueryOptions`: model,
+`maxTurns`, WebSearch), moderation exemption (`isModerationExempt`, which both
+`Moderator.scan` and the Discord re-mute-on-rejoin skip use), and the adapters'
+command gates.
+
+- **Narrow only.** An answer above `seat` is clamped back to `seat`; an answer
+  that is not a tier resolves to `guest`. Tiers still derive from storage/env
+  alone (SECURITY.md §2); the hook can cost privilege, never grant it.
+- **A throw propagates** like a failed seat read: the router treats the sender
+  as `guest`, the rejoin check logs and skips.
+- **Absent, nothing changes**: `resolveRole` returns the seat exactly as before.
+- It does NOT reach `listAdmins()`, which reads admin rows deployment-wide; a
+  module that needs an organisation-scoped admin audience passes its own list
+  to the entry points that take one.
+
+### Interaction organisation
+
+**live** (0.8.2). `src/storage/repository/interactions.ts`, registered through
+the manifest's `resolveInteractionOrg` field.
+
+`interactions` carries a nullable `org_id TEXT` (fragment `11-interactions.sql`):
+
+```sql
+ALTER TABLE interactions ADD COLUMN IF NOT EXISTS org_id TEXT;
+CREATE INDEX IF NOT EXISTS interactions_org_idx
+  ON interactions (org_id, created_at DESC) WHERE org_id IS NOT NULL;
+```
+
+Both statements are idempotent, and a nullable column with no default is a
+catalog-only change on a populated table (no rewrite). Base never interprets
+the value; a single-tenant deployment never sets it.
+
+```ts
+interface InteractionInput { /* … */ orgId?: string | null }
+export type InteractionOrgResolver = (
+  input: Readonly<InteractionInput>,
+) => string | null | undefined | Promise<string | null | undefined>;
+orgSpend(orgId: string, window: { from: Date; to?: Date }): Promise<{ costUsd: number; replies: number }>;
+```
+
+- **Which org a row gets.** An explicit `orgId` on `recordInteraction` wins
+  (`null` = deliberately unattributed; `''` is stored as NULL). With `orgId`
+  omitted, which is how the router records every turn, the registered
+  resolver is asked. With no resolver, or a resolver that answers nothing or
+  throws, the row is written with NULL. A throw is logged and never drops
+  the row, the same posture as a failed embedding.
+- **`orgSpend`** is outbound `cost_usd` and a row count for ONE organisation
+  over `[from, to)`. The id is required and an empty one throws, so the read
+  cannot be called in a way that answers for the whole deployment. NULL rows
+  are never counted. `usageStats` stays deployment-wide, as before.
+- **Backfill is the consumer's.** Rows written before 0.8.2 stay NULL. Only
+  the consumer knows how to attribute them, so it runs the backfill after
+  migrating, in its own migration fragment or as a one-off. It is idempotent
+  because it only touches NULL rows. For example, a consumer that stamped the
+  owning bot into `meta` would run:
+
+  ```sql
+  UPDATE interactions i
+     SET org_id = b.org_id
+    FROM my_bots b
+   WHERE i.org_id IS NULL
+     AND b.id = i.meta->>'botId';
+  ```
+
+  Take a database backup first: the ledger is what the consumer bills from.
+  Rows the join cannot attribute stay NULL, and `orgSpend` does not count
+  them.
 
 ---
 

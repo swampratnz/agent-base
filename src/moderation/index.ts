@@ -1,6 +1,5 @@
 import { config } from '../config.js';
-import { atLeast } from '../auth/rbac.js';
-import { resolveRole } from '../auth/roles.js';
+import { isModerationExempt } from '../auth/roles.js';
 import {
   addWarning,
   countActiveWarnings,
@@ -24,7 +23,7 @@ export function createModerator(enforcer: ModerationEnforcer): Moderator {
       badWords: config.moderation.badWords,
       llmAbuseEnabled: config.moderation.llmAbuseEnabled,
     }),
-    isExempt: async (platform, userId) => atLeast(await resolveRole(platform, userId), 'admin'),
+    isExempt: isModerationExempt,
     getLanguagePreference,
     getResponseStyle,
     store: { addWarning, countActiveWarnings },
