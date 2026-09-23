@@ -39,14 +39,22 @@ async function rejoin(userId: string): Promise<boolean> {
   const adapter = new DiscordAdapter({} as AdapterTextPack) as unknown as {
     muteUser: (id: string) => Promise<void>;
     postAdminAlert: (text: string) => Promise<void>;
-    remuteOnRejoinIfNeeded: (member: { id: string; displayName: string }) => Promise<void>;
+    remuteOnRejoinIfNeeded: (member: {
+      id: string;
+      displayName: string;
+      guild: { id: string };
+    }) => Promise<void>;
   };
   let muted = false;
   adapter.muteUser = async () => {
     muted = true;
   };
   adapter.postAdminAlert = async () => {};
-  await adapter.remuteOnRejoinIfNeeded({ id: userId, displayName: userId });
+  await adapter.remuteOnRejoinIfNeeded({
+    id: userId,
+    displayName: userId,
+    guild: { id: config.discord.guildId },
+  });
   return muted;
 }
 

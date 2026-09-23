@@ -129,6 +129,17 @@ export interface RegisteredCommand {
    * assuming one.
    */
   discord?: DiscordCommandBinding;
+  /**
+   * Offer and dispatch this Discord command in a guild the bot sits in but has
+   * NOT admitted (agent-base #65): the way in for a module's `/claim`, which
+   * has to run inside a server before that server is admitted. Effective only
+   * when a module registered `AgentModule.admitGuild`; the dispatcher's
+   * block-list, role and pause gates still run. The handler must do its own
+   * proof (an owner-only claim checks `interaction.guild.ownerId`), because
+   * admission is exactly what has not happened yet. Absent, a command exists
+   * only in admitted guilds.
+   */
+  preAdmission?: boolean;
 }
 
 let registered: readonly RegisteredCommand[] | undefined;

@@ -101,10 +101,11 @@ surface — completeness is required of the composition, not of any one module.
 | `personas?` | persona registry | **yes**, and exactly one entry must be `isDefault` |
 | `resolveAuthority?` | authority resolver (once per process) | no; absent, every path reads the raw seat |
 | `resolveInteractionOrg?` | interaction organisation resolver (once per process) | no; absent, rows without an explicit `orgId` get NULL |
+| `admitGuild?` | Discord guild admitter (once per process) | no; absent, the adapter hears `DISCORD_GUILD_ID` alone |
 | `turnStateFinalizers?` · `policyKeys?` · `provenance?` · `purgeContributors?` · `preTurnIntercepts?` · `postTurnHandlers?` · `runtimeSecrets?` · `migrations?` | additive | no |
 
 The eight required singleton rows plus `personas` are the nine `assertRegistrationsComplete()`
-probes (`resolveAuthority` and `resolveInteractionOrg` are singletons too — two claimants are refused — but optional); a composition missing any of them is refused with every gap named at
+probes (`resolveAuthority`, `resolveInteractionOrg` and `admitGuild` are singletons too — two claimants are refused — but optional); a composition missing any of them is refused with every gap named at
 once. The additive rows are appended, and base owns the iteration order inside
 each (see the per-registry sections below).
 
@@ -467,12 +468,25 @@ egress path, not just the send sites the module remembered to redact itself.
 `resolveAuthority` field.
 
 ```ts
-export type AuthorityResolver = (who: {
-  platform: Platform;
-  userId: string;
-  seat: Tier; // env super admin, else community_users.role, else guest
-}) => Tier | Promise<Tier>;
+export type AuthorityResolver = (
+  who: {
+    platform: Platform;
+    userId: string;
+    seat: Tier; // env super admin, else community_users.role, else guest
+  } & AuthorityScope,
+) => Tier | Promise<Tier>;
+
+export interface AuthorityScope {
+  conversationId?: string; // Discord channel/thread id or WhatsApp JID, when known
+  guildId?: string; // the Discord guild, when known; absent for DMs and WhatsApp
+}
 ```
+
+`AuthorityScope` arrived in the next patch after 0.8.2 (agent-base #65),
+additively, so a 0.8.2 resolver still compiles. It is filled by the router's
+role step, slash dispatch, `Moderator.scan`'s exemption check, the Discord
+rejoin re-mute skip and the Discord media gates. Treat an absent field as
+unknown, never as "the home guild".
 
 A seat in `community_users` is **deployment-wide**. A consumer with tenants
 knows more: a person made `admin` by one customer organisation is not an admin
@@ -545,6 +559,65 @@ orgSpend(orgId: string, window: { from: Date; to?: Date }): Promise<{ costUsd: n
   Take a database backup first: the ledger is what the consumer bills from.
   Rows the join cannot attribute stay NULL, and `orgSpend` does not count
   them.
+
+### Discord guild admission
+
+**live** (agent-base #65, unreleased). `src/platforms/discord/guildAdmission.ts`,
+registered through the manifest's `admitGuild` field.
+
+```ts
+export type GuildAdmitter = (guildId: string) => boolean | Promise<boolean>;
+
+// platforms/discord/slashDispatch.ts, and DiscordAdapter#registerGuild(guildId)
+registerGuildCommands(client: Client, guildId: string): Promise<'admitted' | 'pre-admission' | 'skipped'>;
+
+// commands/registry.ts
+interface RegisteredCommand { /* … */ preAdmission?: boolean }
+```
+
+The Discord adapter hears `DISCORD_GUILD_ID` and nothing else. A consumer that
+lets a customer bring its own server registers `admitGuild`, and every guild
+check in the adapter and slash dispatch goes through `guildAdmission.ts`:
+
+- **`admitsGuild` (messages, edits, deletes, slash commands).** The home guild
+  always, without asking the hook. Any other guild only when the hook answers
+  exactly `true`; a throw, a rejection or any other value admits nothing and is
+  logged. An unadmitted guild's message is dropped before the moderation scan,
+  the media fetches and the router, so it leaves no row behind.
+  `DISCORD_ALLOWED_CHANNEL_IDS` names home channels, so it binds the home guild
+  only; an admitted guild is admitted whole.
+- **`isHomeGuild` (everything that acts on the configured guild).** Joins and
+  leaves (roster, auto-enroll, welcome, rejoin re-mute), auto-moderation,
+  the membership-scope cache and its invalidation events, the muted-role
+  channel hook, and `canPostTo`. These fetch the configured guild by id, so
+  running them for another guild would apply the operator's community to a
+  stranger's server: a join in an admitted guild would otherwise auto-enroll
+  a deployment-wide member seat. Admin actions (`performAdminAction`) and
+  `conversationsForUser` also still act on the configured guild; see
+  SECURITY.md.
+- **No base-side cache.** The hook runs for every message from a non-home
+  guild. The module writes claims and releases, so it is the only party that
+  can invalidate a cache correctly; a base TTL would make a release lag. A
+  module whose answer is a database read caches inside the hook.
+- **Slash commands are registered per guild, never globally.** A guild
+  registration shows at once, where a global one takes up to an hour, and a
+  claim has to work while the claimant watches. `registerGuildCommands`
+  converges one guild: the full list if admitted, else only the
+  `preAdmission` commands (which may be none, and an empty `set` removes what
+  was there). It is idempotent. The adapter runs it for every non-home guild
+  on `ClientReady` and on `GuildCreate`; the module calls it (or
+  `adapter.registerGuild`) right after a claim or a release. With no hook it
+  never registers outside the home guild.
+- **`preAdmission` commands** are offered and dispatched in a guild that is
+  not admitted yet: the way in for an owner-only `/claim`. The block-list,
+  role and pause gates still run, and the handler does its own proof
+  (`interaction.guild.ownerId`), because admission is what has not happened.
+  Any other command from an unadmitted guild is dropped silently, so a stale
+  registration in a released guild dispatches nothing.
+- **Absent, nothing changes** for messages and events. One deliberate
+  tightening: slash dispatch now drops an interaction from a guild that is not
+  admitted even with no hook. That could only happen through a stale
+  registration, since the base has only ever registered in the home guild.
 
 ---
 
@@ -680,6 +753,7 @@ export interface RegisteredCommand {
   platforms: readonly Platform[];
   whatsapp?: WhatsAppTextCommandHandler;   // the `!name` text path
   discord?: DiscordCommandBinding;         // { build(), handle() } — bound late
+  preAdmission?: boolean;                  // offered before a guild is admitted (§ Discord guild admission)
 }
 
 registerCommands(commands: readonly RegisteredCommand[]): void;

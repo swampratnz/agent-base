@@ -86,6 +86,7 @@ import type { AuthorityResolver } from './auth/roles.js';
 import { registerAuthorityResolver } from './auth/roles.js';
 import type { InteractionOrgResolver } from './storage/repository/interactions.js';
 import { registerInteractionOrgResolver } from './storage/repository/interactions.js';
+import { registerGuildAdmitter, type GuildAdmitter } from './platforms/discord/guildAdmission.js';
 import type { ModuleMigrationFragment } from './storage/migrate.js';
 import { migrate } from './storage/migrate.js';
 import type { FleetHeartbeat, FleetHeartbeatDeps } from './fleet/heartbeat.js';
@@ -163,6 +164,15 @@ export interface AgentModule<Ctx = unknown> {
    * Absent, such rows get a NULL org_id, as every row did before 0.8.2.
    */
   resolveInteractionOrg?: InteractionOrgResolver;
+  /**
+   * OPTIONAL: may the Discord adapter hear a guild other than
+   * `DISCORD_GUILD_ID` (agent-base #65)? Asked for every message, edit, delete
+   * and slash command from such a guild; only a literal `true` admits, and a
+   * throw admits nothing. The configured guild is always admitted without
+   * asking. Absent, the adapter hears the configured guild alone, as before.
+   * See `GuildAdmitter` in platforms/discord/guildAdmission.ts.
+   */
+  admitGuild?: GuildAdmitter;
 
   // --- additive registries -------------------------------------------------
   personas?: readonly { persona: Persona; isDefault?: boolean }[];
@@ -352,6 +362,7 @@ const SINGLETONS: readonly { registry: string; field: keyof AgentModule }[] = Ob
   { registry: 'default bad words', field: 'defaultBadWords' },
   { registry: 'authority resolver', field: 'resolveAuthority' },
   { registry: 'interaction organisation resolver', field: 'resolveInteractionOrg' },
+  { registry: 'guild admitter', field: 'admitGuild' },
 ]);
 
 /**
@@ -422,6 +433,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<Agent> {
     if (mod.defaultBadWords) registerDefaultBadWords(mod.defaultBadWords);
     if (mod.resolveAuthority) registerAuthorityResolver(mod.resolveAuthority);
     if (mod.resolveInteractionOrg) registerInteractionOrgResolver(mod.resolveInteractionOrg);
+    if (mod.admitGuild) registerGuildAdmitter(mod.admitGuild);
   }
 
   // 4. additive registries. Base owns ITERATION order inside each of these

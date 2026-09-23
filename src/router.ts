@@ -1072,7 +1072,10 @@ export class Router {
     const { msg } = ctx;
     let role: Tier;
     try {
-      role = await resolveRole(msg.platform, msg.userId);
+      role = await resolveRole(msg.platform, msg.userId, {
+        conversationId: msg.conversationId,
+        ...(msg.guildId ? { guildId: msg.guildId } : {}),
+      });
     } catch (err) {
       logger.error({ err }, 'Role resolution failed; treating sender as guest');
       role = 'guest';

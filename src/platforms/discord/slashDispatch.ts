@@ -7,6 +7,7 @@ import type { Tier } from '../../auth/tiers.js';
 import { isUserBlocked } from '../../storage/repository.js';
 import { isPaused } from '../../storage/policyStore.js';
 import { notice } from '../../strings/catalogue.js';
+import { admitsGuild, hasGuildAdmitter, isHomeGuild } from './guildAdmission.js';
 
 /**
  * The Discord slash-command MECHANISM (agent-base plan §Phase-2 Stage 4):
@@ -49,6 +50,16 @@ export function buildSlashCommands() {
 }
 
 /**
+ * Only the commands a module marked `preAdmission` — what a guild the bot sits
+ * in but has not admitted is offered (a `/claim`, agent-base #65).
+ */
+function buildPreAdmissionSlashCommands() {
+  return registeredCommands().flatMap((command) =>
+    command.discord && command.preAdmission ? [command.discord.build()] : [],
+  );
+}
+
+/**
  * Guild-scoped registration on `ClientReady` (never global — this deployment
  * is single-guild, and global registration propagates over up to an hour and
  * widens exposure to any guild the bot token might ever join). Fire-and-
@@ -66,6 +77,40 @@ export async function registerSlashCommands(client: Client): Promise<void> {
   } catch (err) {
     logger.warn({ err }, 'Slash command registration failed');
   }
+}
+
+/**
+ * Converge ONE guild's slash commands to its admission (agent-base #65),
+ * still guild-scoped and never global, for the reasons above plus one more:
+ * a guild registration shows immediately, where a global one can take up to
+ * an hour, and a claim has to work while the customer is looking at it.
+ *
+ * - an admitted guild (the home guild, or one the module's `admitGuild`
+ *   admits) gets the full list;
+ * - any other guild gets only the `preAdmission` commands, which may be none,
+ *   and `set` with an empty list REMOVES what was there — so a release, or a
+ *   hook that now throws, takes the full list back out rather than leaving it.
+ *
+ * Idempotent (`set` replaces), so it is safe to call on every boot, on every
+ * join, and again after every claim and release. A no-op returning 'skipped'
+ * when slash commands are off, and for a non-home guild when no module
+ * registered `admitGuild` — a single-guild deployment never registers
+ * anywhere but its home guild. A Discord API failure throws, so a module's
+ * `/claim` can tell the claimant.
+ */
+export async function registerGuildCommands(
+  client: Client,
+  guildId: string,
+): Promise<'admitted' | 'pre-admission' | 'skipped'> {
+  if (!config.discord.slashCommandsEnabled || !client.application) return 'skipped';
+  if (!isHomeGuild(guildId) && !hasGuildAdmitter()) return 'skipped';
+  const admitted = await admitsGuild(guildId);
+  await client.application.commands.set(
+    admitted ? buildSlashCommands() : buildPreAdmissionSlashCommands(),
+    guildId,
+  );
+  logger.info({ guildId, admitted }, 'Discord slash commands registered for guild');
+  return admitted ? 'admitted' : 'pre-admission';
 }
 
 /**
@@ -119,6 +164,17 @@ export async function handleInteraction(
   const command = registeredCommands().find((c) => c.name === interaction.commandName);
   if (!command?.discord) return;
 
+  // SECURITY: the same admission as a message (agent-base #65), silently. A
+  // guild interaction is dispatched only from an admitted guild, or — for a
+  // `preAdmission` command, and only when a module registered `admitGuild` —
+  // from a guild that is not admitted yet, which is how `/claim` runs at all.
+  // A stale registration left in a released guild therefore dispatches
+  // nothing. A DM interaction (no guild) is untouched.
+  const guildId = interaction.guildId;
+  if (guildId != null && !(await admitsGuild(guildId))) {
+    if (!(command.preAdmission && hasGuildAdmitter())) return;
+  }
+
   try {
     if (await gates.isUserBlockedFn('discord', interaction.user.id)) return;
   } catch (err) {
@@ -127,7 +183,10 @@ export async function handleInteraction(
 
   let role: Tier;
   try {
-    role = await gates.resolveRoleFn('discord', interaction.user.id);
+    role = await gates.resolveRoleFn('discord', interaction.user.id, {
+      ...(interaction.channelId ? { conversationId: interaction.channelId } : {}),
+      ...(guildId ? { guildId } : {}),
+    });
   } catch (err) {
     logger.error({ err }, 'Slash role resolution failed; treating caller as guest');
     role = 'guest';

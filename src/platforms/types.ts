@@ -84,6 +84,13 @@ export interface IncomingMessage {
   };
   /** True if this is a 1:1 / direct conversation rather than a group/channel. */
   isDirect: boolean;
+  /**
+   * The Discord guild a guild message arrived in (agent-base #65). Absent for
+   * a DM and on every other platform. With a module's `admitGuild` hook this
+   * can be a guild other than `DISCORD_GUILD_ID`; the router hands it to
+   * `resolveAuthority` so standing can be narrowed per server.
+   */
+  guildId?: string;
   /** Whether the bot was explicitly addressed (mention / DM / reply). */
   addressedToBot: boolean;
   /**
