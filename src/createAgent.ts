@@ -82,6 +82,8 @@ import type { PreTurnIntercept, PostTurnHandler } from './routerIntercepts.js';
 import { registerPostTurnHandler, registerPreTurnIntercept } from './routerIntercepts.js';
 import type { RuntimeSecretGetter } from './agent/secrets.js';
 import { registerRuntimeSecret } from './agent/secrets.js';
+import type { AuthorityResolver } from './auth/roles.js';
+import { registerAuthorityResolver } from './auth/roles.js';
 import type { ModuleMigrationFragment } from './storage/migrate.js';
 import { migrate } from './storage/migrate.js';
 import type { FleetHeartbeat, FleetHeartbeatDeps } from './fleet/heartbeat.js';
@@ -145,6 +147,14 @@ export interface AgentModule<Ctx = unknown> {
   commands?: readonly RegisteredCommand[];
   /** The default moderation term list. */
   defaultBadWords?: readonly string[];
+  /**
+   * OPTIONAL organisation-aware narrowing of the deployment seat, applied by
+   * `resolveRole` on every base path that reads standing (turn tier, moderation
+   * exemption, the Discord rejoin re-mute skip, command gates). It can only
+   * lower a tier, never raise one; see `AuthorityResolver` in auth/roles.ts.
+   * Absent, every path reads the raw seat exactly as before.
+   */
+  resolveAuthority?: AuthorityResolver;
 
   // --- additive registries -------------------------------------------------
   personas?: readonly { persona: Persona; isDefault?: boolean }[];
@@ -332,6 +342,7 @@ const SINGLETONS: readonly { registry: string; field: keyof AgentModule }[] = Ob
   { registry: 'prompt sections', field: 'promptSections' },
   { registry: 'commands', field: 'commands' },
   { registry: 'default bad words', field: 'defaultBadWords' },
+  { registry: 'authority resolver', field: 'resolveAuthority' },
 ]);
 
 /**
@@ -400,6 +411,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<Agent> {
     if (mod.promptSections) registerPromptSections(mod.promptSections);
     if (mod.commands) registerCommands(mod.commands);
     if (mod.defaultBadWords) registerDefaultBadWords(mod.defaultBadWords);
+    if (mod.resolveAuthority) registerAuthorityResolver(mod.resolveAuthority);
   }
 
   // 4. additive registries. Base owns ITERATION order inside each of these

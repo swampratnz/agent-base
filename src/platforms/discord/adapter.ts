@@ -49,7 +49,7 @@ import { notice, isRegisteredLanguage } from '../../strings/catalogue.js';
 import { getCodeAnswersPolicy } from '../../storage/policyStore.js';
 import { createModerator, type ModerationEnforcer, type Moderator } from '../../moderation/index.js';
 import { atLeast } from '../../auth/rbac.js';
-import { isSuperAdmin, resolveRole, superAdminIds } from '../../auth/roles.js';
+import { isModerationExempt, isSuperAdmin, resolveRole, superAdminIds } from '../../auth/roles.js';
 import {
   autoEnrollMemberWithAudit,
   countActiveWarnings,
@@ -1047,7 +1047,7 @@ export class DiscordAdapter implements PlatformAdapter, ModerationEnforcer {
    * should know.
    */
   private async remuteOnRejoinIfNeeded(member: GuildMember): Promise<void> {
-    if (atLeast(await resolveRole('discord', member.id), 'admin')) return;
+    if (await isModerationExempt('discord', member.id)) return;
     // Deliberately UNWINDOWED (no strikeWindowDays): this check exists to
     // close the leave/rejoin mute-evasion bypass, so it must see every
     // uncleared strike regardless of age — otherwise leaving and waiting out

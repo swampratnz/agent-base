@@ -99,10 +99,11 @@ surface — completeness is required of the composition, not of any one module.
 | `commands?` | command roster | **yes** |
 | `defaultBadWords?` | moderation term list | **yes** |
 | `personas?` | persona registry | **yes**, and exactly one entry must be `isDefault` |
+| `resolveAuthority?` | authority resolver (once per process) | no; absent, every path reads the raw seat |
 | `turnStateFinalizers?` · `policyKeys?` · `provenance?` · `purgeContributors?` · `preTurnIntercepts?` · `postTurnHandlers?` · `runtimeSecrets?` · `migrations?` | additive | no |
 
-The eight singleton rows plus `personas` are the nine `assertRegistrationsComplete()`
-probes; a composition missing any of them is refused with every gap named at
+The eight required singleton rows plus `personas` are the nine `assertRegistrationsComplete()`
+probes (`resolveAuthority` is a singleton too — two claimants are refused — but optional); a composition missing any of them is refused with every gap named at
 once. The additive rows are appended, and base owns the iteration order inside
 each (see the per-registry sections below).
 
@@ -458,6 +459,38 @@ Three properties are deliberate, and each has a `SECURITY:` test:
 This closes the gap PHASE-4-PERSONAL-AGENT.md §8.2 named: a module holding an
 OAuth refresh token registers a getter for it and the backstop covers every
 egress path, not just the send sites the module remembered to redact itself.
+
+### Authority resolver
+
+**live** (0.8.2). `src/auth/roles.ts`, registered through the manifest's
+`resolveAuthority` field.
+
+```ts
+export type AuthorityResolver = (who: {
+  platform: Platform;
+  userId: string;
+  seat: Tier; // env super admin, else community_users.role, else guest
+}) => Tier | Promise<Tier>;
+```
+
+A seat in `community_users` is **deployment-wide**. A consumer with tenants
+knows more: a person made `admin` by one customer organisation is not an admin
+of the operator's guild. `resolveRole` hands the resolved seat to this hook and
+returns its answer, so every base path that reads standing sees the narrowed
+tier: the router's turn tier (and through it `buildQueryOptions`: model,
+`maxTurns`, WebSearch), moderation exemption (`isModerationExempt`, which both
+`Moderator.scan` and the Discord re-mute-on-rejoin skip use), and the adapters'
+command gates.
+
+- **Narrow only.** An answer above `seat` is clamped back to `seat`; an answer
+  that is not a tier resolves to `guest`. Tiers still derive from storage/env
+  alone (SECURITY.md §2); the hook can cost privilege, never grant it.
+- **A throw propagates** like a failed seat read: the router treats the sender
+  as `guest`, the rejoin check logs and skips.
+- **Absent, nothing changes**: `resolveRole` returns the seat exactly as before.
+- It does NOT reach `listAdmins()`, which reads admin rows deployment-wide; a
+  module that needs an organisation-scoped admin audience passes its own list
+  to the entry points that take one.
 
 ---
 

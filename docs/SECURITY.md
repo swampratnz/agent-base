@@ -160,6 +160,12 @@ tools attached and cannot call them however convincingly it is asked.
 Privileged handlers re-assert the tier anyway; structural gating and in-handler
 assertion are separate layers on purpose.
 
+A module may register one `resolveAuthority` hook (MODULE-API.md § Authority
+resolver) that NARROWS the stored seat, for a deployment whose seats are wider
+than a person's real standing. `resolveRole` clamps its answer to the seat, so
+it can lower a tier and never raise one: tiers still come only from env and
+storage.
+
 Tier lists are **derived from tool registrations**, not maintained alongside
 them. A hand-mirrored list drifts, and a tool registered on the server but
 missing from its tier's offer list fails silently.
