@@ -17,7 +17,7 @@
   "moderationRepo.test.ts": 4,
   "noticeCatalogue.test.ts": 1,
   "outbound.test.ts": 8,
-  "pendingActions.test.ts": 3,
+  "pendingActions.test.ts": 4,
   "pendingAlertQueue.test.ts": 3,
   "provenanceTrust.test.ts": 3,
   "rateReservation.test.ts": 4,

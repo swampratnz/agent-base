@@ -94,18 +94,74 @@ export function applyCodePolicy(
   return out.join('\n');
 }
 
+// One run of em dashes (U+2014) or horizontal bars (U+2015) with the spaces
+// around it. The en dash (U+2013) is never matched, so "10–20" survives.
+const DASH_RUN = /[ \t]*[—―]+[ \t]*/g;
+// What may sit between the start of a line and its first word without that
+// word stopping being the line's first: indentation, blockquote markers, a
+// list bullet or number. A dash here is a lead-in ("— Sam"), not a joint.
+const LINE_LEAD = /^\s*(?:>\s*)*(?:[-*+•]\s+|\d+[.)]\s+)?$/;
+// Inline markdown emphasis/code markers. A dash wrapped in them on both sides
+// ("**—**") is a placeholder standing on its own, typically an empty cell.
+const MARKER = /[*_~`]/;
+// A markdown table row. Every dash in one is kept as a plain hyphen: a cell
+// is copied as data, and ", " there reads as a corrupted value.
+const TABLE_ROW = /^\s*\|/;
+
+function dashReplacement(before: string, after: string, tableRow: boolean): string {
+  const prev = before.at(-1) ?? '';
+  const next = after[0] ?? '';
+  if (tableRow) return '-';
+  if (/\d/.test(prev) && /\d/.test(next)) return '–'; // a numeric range
+  if (MARKER.test(prev) && MARKER.test(next)) return '-'; // "**—**" placeholder
+  if (LINE_LEAD.test(before)) return ''; // "— Sam" lead-in: drop the dash
+  if (after.trim() === '') return ''; // trailing dash: drop it
+  if (/[.!?]/.test(prev)) return '\n'; // "next time. — Sam" is a sign-off
+  if (/[,;:]/.test(prev)) return ' '; // punctuation already joins the halves
+  if (/[([{"'“‘]/.test(prev)) return ''; // "(— aside" -> "(aside"
+  if (/[.,!?;:)\]}"'”’]/.test(next)) return ''; // "yes — ." -> "yes."
+  return ', '; // "a — b" -> "a, b"
+}
+
+function stripEmDashesInProse(segment: string, before: string, tableRow: boolean): string {
+  return segment.replace(DASH_RUN, (match, offset: number) => {
+    const lead = before + segment.slice(0, offset);
+    const trail = segment.slice(offset + match.length);
+    const replacement = dashReplacement(lead, trail, tableRow);
+    // In a table the spacing is the author's layout; keep it.
+    if (tableRow) return match.replace(/[—―]+/, replacement);
+    // A dash that was a lead-in keeps the indentation in front of it.
+    if (replacement === '' && LINE_LEAD.test(lead)) return match.match(/^[ \t]*/)?.[0] ?? '';
+    return replacement;
+  });
+}
+
 /**
  * Rewrite em dashes into natural punctuation. The system prompt asks the model
  * not to use them; this guarantees none reach the community even when it
  * disobeys. Targets the em dash (U+2014) and horizontal bar (U+2015) only —
  * the en dash (U+2013) is left alone so numeric ranges like "10–20" survive.
+ *
+ * Each dash is replaced by what reads naturally where it stands, and the rest
+ * of the line is never touched: the rule once ran blanket comma-tidying over
+ * every line, and a blanket ", " turned a table cell's "**—**" into "**, **"
+ * and a sign-off "next time. — Sam" into "next time., Sam" (WattoBot #289).
+ * So: a table row keeps a hyphen, a dash wrapped in markers is a hyphen, a
+ * lead-in or trailing dash goes, a dash after a full stop starts a new line,
+ * one after a comma or colon becomes a space, one before punctuation goes, a
+ * digit-to-digit dash becomes an en dash, and only a dash between two words
+ * becomes ", ". Inline code spans are left alone, like fenced blocks.
  */
 export function stripEmDashes(line: string): string {
-  return line
-    .replace(/\s*[—―]\s*/g, ', ') // "a — b" / "a—b" -> "a, b"
-    .replace(/\s+,/g, ',') // tidy stray space-before-comma
-    .replace(/,\s*,/g, ',') // collapse doubled commas
-    .replace(/,\s*([.!?;:])/g, '$1'); // "word, ." -> "word."
+  if (!/[—―]/.test(line)) return line;
+  const tableRow = TABLE_ROW.test(line);
+  // Odd-indexed parts are inline code spans (`...`); only prose is rewritten.
+  const parts = line.split(/(`[^`]*`)/);
+  let done = '';
+  for (let i = 0; i < parts.length; i++) {
+    done += i % 2 === 1 ? parts[i] : stripEmDashesInProse(parts[i], done, tableRow);
+  }
+  return done;
 }
 
 /** Apply {@link stripEmDashes} to prose only, leaving fenced code blocks untouched. */

@@ -196,6 +196,11 @@ confirm time** (a role revoked inside the TTL invalidates the queued action),
 and executes. The model never executes a destructive action — an injection can
 at most *request* one.
 
+A pending action lives for `CONFIRM_TTL_MS` (60 s) unless the module registers
+it with its own `ttlMs` (a web card a person comes back to needs longer). Base
+caps that at `CONFIRM_MAX_TTL_MS` (1 hour), so a forgotten destructive action
+can never fire on a CONFIRM typed much later for something else.
+
 The CONFIRM/CANCEL tokens are base-owned protocol literals. Modules cannot
 translate or restyle them: a localisable confirmation token is a confusable
 confirmation token.

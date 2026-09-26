@@ -23,23 +23,42 @@ export interface PendingAction {
 
 export const CONFIRM_TTL_MS = 60_000;
 
+/**
+ * The longest a module may keep a pending action open. A surface where the
+ * confirmation is a card a person comes back to (a web chat) needs longer
+ * than a minute, and the tier is re-resolved at confirm time whatever the
+ * window, but an unbounded window would let a destructive action registered
+ * and forgotten fire on a CONFIRM typed days later for something else. So a
+ * module chooses its TTL and base caps it.
+ */
+export const CONFIRM_MAX_TTL_MS = 60 * 60_000;
+
 const pending = new Map<string, PendingAction>();
 
 function key(platform: Platform, conversationId: string, actorUserId: string): string {
   return `${platform}:${conversationId}:${actorUserId}`;
 }
 
-/** Register (replacing any previous pending action for this actor+conversation). */
+/**
+ * Register (replacing any previous pending action for this actor+conversation).
+ * `ttlMs` defaults to {@link CONFIRM_TTL_MS} and is clamped to at most
+ * {@link CONFIRM_MAX_TTL_MS}; a non-finite or non-positive value means the
+ * default. Returns the `expiresAt` it stored, so a surface can show it.
+ */
 export function registerPendingAction(
   platform: Platform,
   conversationId: string,
   actorUserId: string,
   action: Omit<PendingAction, 'expiresAt'>,
-): void {
-  pending.set(key(platform, conversationId, actorUserId), {
-    ...action,
-    expiresAt: Date.now() + CONFIRM_TTL_MS,
-  });
+  ttlMs?: number,
+): number {
+  const ttl =
+    ttlMs !== undefined && Number.isFinite(ttlMs) && ttlMs > 0
+      ? Math.min(ttlMs, CONFIRM_MAX_TTL_MS)
+      : CONFIRM_TTL_MS;
+  const expiresAt = Date.now() + ttl;
+  pending.set(key(platform, conversationId, actorUserId), { ...action, expiresAt });
+  return expiresAt;
 }
 
 /** Take (and remove) the actor's pending action if one exists and is fresh. */

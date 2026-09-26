@@ -177,6 +177,70 @@ test('em dashes become natural punctuation, without mangling the sentence', () =
   );
 });
 
+// The shapes a real review found corrupted in text people copy (WattoBot
+// #289): a blanket ", " turned a roster cell's "**—**" into "**, **" and a
+// review reply's sign-off into "next time., Sam".
+test('a dash in a table row stays a hyphen, never a comma', () => {
+  assert.equal(stripEmDashes('| Mon | **—** | 9–5 |'), '| Mon | **-** | 9–5 |');
+  assert.equal(stripEmDashes('| Tue | — | Sam |'), '| Tue | - | Sam |');
+  assert.equal(stripEmDashes('| Wed | Sam — close |'), '| Wed | Sam - close |');
+});
+
+test('a sign-off after a full stop goes onto its own line', () => {
+  assert.equal(
+    stripEmDashes('Thanks for coming in, see you next time. — Sam'),
+    'Thanks for coming in, see you next time.\nSam',
+  );
+  assert.equal(stripEmDashes('Cheers! —Sam'), 'Cheers!\nSam');
+});
+
+test('a dash never leaves ", " next to punctuation or markdown markers', () => {
+  const shapes = [
+    'Status: **—**',
+    'Hours: — (closed)',
+    'we tried — , twice',
+    '*—* nothing yet',
+    'the end —',
+    '— Sam',
+    '  > — quoted',
+    '(— an aside)',
+    'next time. — Sam',
+    '| **—** | x |',
+  ];
+  for (const shape of shapes) {
+    const out = stripEmDashes(shape);
+    assert.doesNotMatch(out, /[—―]/, `no dash survives in ${JSON.stringify(shape)}`);
+    assert.doesNotMatch(
+      out,
+      /[.!?;:,(]\s*,|,\s*[.!?;:,)]/,
+      `no comma beside punctuation in ${JSON.stringify(out)}`,
+    );
+    assert.doesNotMatch(out, /[*_~`],|,\s*[*_~`]/, `no comma beside a marker in ${JSON.stringify(out)}`);
+  }
+  assert.equal(stripEmDashes('Status: **—**'), 'Status: **-**');
+  assert.equal(stripEmDashes('Hours: — (closed)'), 'Hours: (closed)');
+  assert.equal(stripEmDashes('the end —'), 'the end');
+  assert.equal(stripEmDashes('— Sam'), 'Sam');
+  assert.equal(stripEmDashes('  > — quoted'), '  > quoted');
+  assert.equal(stripEmDashes('(— an aside)'), '(an aside)');
+});
+
+test('a dash between words still reads as a comma, and ranges become en dashes', () => {
+  assert.equal(
+    stripEmDashes('Rosie — our roster Bot — drafts the week'),
+    'Rosie, our roster Bot, drafts the week',
+  );
+  assert.equal(stripEmDashes('open 9—5'), 'open 9–5');
+});
+
+test('dash rewriting touches nothing but the dash', () => {
+  // The old rule tidied commas across the WHOLE line, so text with no dash
+  // in it at all could be repunctuated.
+  assert.equal(stripEmDashes('a , b ,. c'), 'a , b ,. c');
+  assert.equal(stripEmDashes('odd , spacing — here'), 'odd , spacing, here');
+  assert.equal(stripEmDashes('run `a—b` then — go'), 'run `a—b` then, go', 'inline code is left alone');
+});
+
 test('em-dash rewriting leaves fenced code alone', () => {
   // Rewriting punctuation inside code would change what a snippet DOES, which
   // is a correctness bug dressed as a style rule.

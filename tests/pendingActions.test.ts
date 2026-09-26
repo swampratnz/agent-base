@@ -4,6 +4,7 @@ import {
   cancelPendingAction,
   classifyConfirmReply,
   CONFIRM_TTL_MS,
+  CONFIRM_MAX_TTL_MS,
   hasPendingAction,
   peekPendingAction,
   registerPendingAction,
@@ -126,6 +127,53 @@ test('SECURITY: a pending CONFIRM expires at CONFIRM_TTL_MS — an expired destr
       'an expired CONFIRM must never return the stored destructive action',
     );
     assert.equal(runs, 0, 'the expired executor is never invoked');
+  } finally {
+    nowMock.mock.restore();
+  }
+});
+
+test('a module may choose a longer TTL, and the stored expiry is returned', () => {
+  const base = 1_500_000;
+  const nowMock = mock.method(Date, 'now', () => base);
+  try {
+    const expiresAt = registerPendingAction(
+      'discord',
+      'c-long',
+      'a',
+      { description: 'x', minTier: 'member', execute: async () => 'ok' },
+      30 * 60_000,
+    );
+    assert.equal(expiresAt, base + 30 * 60_000);
+    nowMock.mock.mockImplementation(() => base + 5 * 60_000);
+    assert.ok(hasPendingAction('discord', 'c-long', 'a'), 'still valid after five minutes');
+    nowMock.mock.mockImplementation(() => base + 30 * 60_000 + 1);
+    assert.equal(takePendingAction('discord', 'c-long', 'a'), null, 'and expires at its own TTL');
+  } finally {
+    nowMock.mock.restore();
+  }
+});
+
+test('SECURITY: a module TTL is capped at CONFIRM_MAX_TTL_MS, and a nonsense TTL means the default', () => {
+  // An unbounded window would let a forgotten destructive action fire on a
+  // CONFIRM typed much later for something else.
+  const base = 1_600_000;
+  const nowMock = mock.method(Date, 'now', () => base);
+  const action = { description: 'purge', minTier: 'super_admin' as const, execute: async () => 'RAN' };
+  try {
+    assert.equal(
+      registerPendingAction('discord', 'c-cap', 'a', action, 7 * 24 * 60 * 60_000),
+      base + CONFIRM_MAX_TTL_MS,
+    );
+    nowMock.mock.mockImplementation(() => base + CONFIRM_MAX_TTL_MS + 1);
+    assert.equal(takePendingAction('discord', 'c-cap', 'a'), null, 'never valid past the cap');
+    nowMock.mock.mockImplementation(() => base);
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assert.equal(
+        registerPendingAction('discord', 'c-bad', 'a', action, bad),
+        base + CONFIRM_TTL_MS,
+        String(bad),
+      );
+    }
   } finally {
     nowMock.mock.restore();
   }
