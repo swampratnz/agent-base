@@ -231,6 +231,12 @@ test('a dash between words still reads as a comma, and ranges become en dashes',
     'Rosie, our roster Bot, drafts the week',
   );
   assert.equal(stripEmDashes('open 9—5'), 'open 9–5');
+  // A straight quote can open or close, so it never swallows the dash
+  // (community-agent's /mysubmissions receipt caught this in the canary).
+  assert.equal(
+    stripEmDashes('- #9 — "a slash-command reachability topic" — no match, filed'),
+    '- #9, "a slash-command reachability topic", no match, filed',
+  );
 });
 
 test('dash rewriting touches nothing but the dash', () => {

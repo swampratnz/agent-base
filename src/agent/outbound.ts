@@ -118,8 +118,10 @@ function dashReplacement(before: string, after: string, tableRow: boolean): stri
   if (after.trim() === '') return ''; // trailing dash: drop it
   if (/[.!?]/.test(prev)) return '\n'; // "next time. — Sam" is a sign-off
   if (/[,;:]/.test(prev)) return ' '; // punctuation already joins the halves
-  if (/[([{"'“‘]/.test(prev)) return ''; // "(— aside" -> "(aside"
-  if (/[.,!?;:)\]}"'”’]/.test(next)) return ''; // "yes — ." -> "yes."
+  // Straight quotes are in neither set: `"` may open or close, and a quoted
+  // title between two dashes ("#9 — "topic" — filed") reads as a list.
+  if (/[([{“‘]/.test(prev)) return ''; // "(— aside" -> "(aside"
+  if (/[.,!?;:)\]}”’]/.test(next)) return ''; // "yes — ." -> "yes."
   return ', '; // "a — b" -> "a, b"
 }
 
