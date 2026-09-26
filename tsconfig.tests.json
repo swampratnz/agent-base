@@ -45,6 +45,7 @@
     "tests/accessRequestRetention.test.ts",
     "tests/accessRequestRetentionIndependence.test.ts",
     "tests/ackClassifier.test.ts",
+    "tests/agentStop.test.ts",
     "tests/authorityResolver.test.ts",
     "tests/authorityResolverDefault.test.ts",
     "tests/backgroundJobHealth.test.ts",

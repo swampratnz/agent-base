@@ -97,6 +97,15 @@ export interface AgentReply {
    */
   maxTurnsExceeded?: boolean;
   /**
+   * Set to `true` only when the module's `signal` (see {@link runAgentTurn})
+   * fired and ended the turn. Such a reply is `ok: false` with an EMPTY
+   * `text` and no fallback notice: the person asked for the turn to stop, so
+   * the module says what it wants to say. `costUsd` and the other telemetry
+   * carry whatever the CLI reported before it stopped, which is what was
+   * spent. A caller that cares must check `=== true`.
+   */
+  stopped?: boolean;
+  /**
    * The caller's standing language preference for this turn (issue #339),
    * threaded straight from the same `getLanguagePreference` lookup
    * `buildSystemPrompt` already uses — no new DB call. Left `undefined` only
@@ -198,6 +207,7 @@ interface TurnOutcome {
   modelUsage?: Record<string, number>;
   sessionId?: string;
   maxTurnsExceeded?: boolean;
+  stopped?: boolean;
   turnState?: Partial<TurnStateBag>;
 }
 
@@ -768,6 +778,12 @@ export function resumableSessionId(
  * result. Tool access is restricted by RBAC via `allowedTools`, and ALL
  * built-in Claude Code tools (Bash/Read/Write/...) are disabled via
  * `tools: []`, so the model's only capabilities are our MCP tools.
+ *
+ * `signal` lets a module stop the turn (a person pressing Stop). Once it
+ * fires, the running model call is interrupted, the turn resolves `ok: false`
+ * with `stopped: true`, an empty `text` and the cost the CLI reported before
+ * it stopped, and the failed-resume retry is never started. A signal that has
+ * already fired makes no model call at all. See {@link execTurn}.
  */
 export async function runAgentTurn(
   caller: CallerContext,
@@ -775,6 +791,7 @@ export async function runAgentTurn(
   adapter: PlatformAdapter,
   getAdapter?: AdapterLookup,
   image?: IncomingMessage['image'],
+  signal?: AbortSignal,
 ): Promise<AgentReply> {
   // Bound the model-bound copy only — this reassigns the local `userText`
   // binding, never the caller's original string (msg.text in router.ts), so
@@ -887,14 +904,25 @@ export async function runAgentTurn(
       .join('\n\n');
   const prompt = assemblePrompt(priorSession ? [] : await fetchTail());
 
-  const first = await execTurn(caller, prompt, systemPrompt, adapter, priorSession, getAdapter, image);
+  const first = await execTurn(
+    caller,
+    prompt,
+    systemPrompt,
+    adapter,
+    priorSession,
+    getAdapter,
+    image,
+    signal,
+  );
   let outcome = first;
 
   // If resuming a stale/foreign session failed (session files are CLI-local
   // disk state), drop the stored id and retry once with a fresh session so
   // the conversation doesn't brick itself. The retry is a fresh session too,
-  // so it gets the same tail backfill the rollover path above does.
-  if (!first.ok && first.resumeFailed && priorSession) {
+  // so it gets the same tail backfill the rollover path above does. Never
+  // after a Stop: the person asked for nothing more to run, and a retry is a
+  // second model call.
+  if (!first.ok && first.resumeFailed && priorSession && !signal?.aborted) {
     logger.warn(
       { conversationId: caller.conversationId, priorSession },
       'Session resume failed; clearing stored session and retrying fresh',
@@ -908,6 +936,7 @@ export async function runAgentTurn(
       null,
       getAdapter,
       image,
+      signal,
     );
   }
 
@@ -939,6 +968,7 @@ export async function runAgentTurn(
     sessionId: outcome.sessionId,
     ok: outcome.ok,
     maxTurnsExceeded: outcome.maxTurnsExceeded,
+    ...(outcome.stopped ? { stopped: true } : {}),
     languagePreference,
     responseStyle,
     turnState: outcome.turnState,
@@ -1019,22 +1049,41 @@ function noteUsageLimitOutcome(
  * verbatim, and matches this repo's caption-then-image logging convention
  * elsewhere (adminDigest.ts image summaries).
  */
-async function* imagePromptStream(
+async function* promptStream(
   text: string,
-  image: NonNullable<IncomingMessage['image']>,
+  image: IncomingMessage['image'] | undefined,
 ): AsyncIterable<SDKUserMessage> {
   yield {
     type: 'user',
     message: {
       role: 'user',
-      content: [
-        { type: 'text', text },
-        { type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } },
-      ],
+      content: image
+        ? [
+            { type: 'text', text },
+            { type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } },
+          ]
+        : [{ type: 'text', text }],
     },
     parent_tool_use_id: null,
   };
 }
+
+/**
+ * How long a stopped turn waits, after `Query.interrupt()`, for the CLI's own
+ * `result` message before the `abortController` backstop fires. The interrupt
+ * is the graceful path: the CLI ends the model call and still reports
+ * `total_cost_usd`, which is what the module records as spent. A few seconds
+ * bounds a CLI that never answers the interrupt; after the backstop the cost
+ * is whatever had arrived, possibly none.
+ */
+export const STOP_GRACE_MS = 3000;
+
+/**
+ * Internal marker for a turn whose module signal fired and whose CLI did not
+ * finish within {@link STOP_GRACE_MS} of the interrupt. Like the timeout
+ * marker below, never surfaced in a reply.
+ */
+class AgentTurnStoppedError extends Error {}
 
 /**
  * Internal marker for a turn that never settled within
@@ -1095,7 +1144,10 @@ export async function execTurn(
   resumeSession: string | null,
   getAdapter?: AdapterLookup,
   image?: IncomingMessage['image'],
+  signal?: AbortSignal,
 ): Promise<TurnOutcome> {
+  // Stopped before the model was reached: nothing runs and nothing is spent.
+  if (signal?.aborted) return { ok: false, resumeFailed: false, text: '', stopped: true };
   // Turn-scoped ref (issue #411): tool handlers write their module's keys
   // into this bag during the turn (agent/communityTurnState.ts documents
   // today's five); finalized back below only on the genuine-success path
@@ -1121,6 +1173,19 @@ export async function execTurn(
   let cacheCreationTokens: number | undefined;
   let modelUsage: Record<string, number> | undefined;
   let sessionId: string | undefined;
+  // What a stopped turn resolves to: no text and no fallback notice (the
+  // module speaks for a Stop), with whatever the CLI had reported as spent.
+  const stoppedOutcome = (): TurnOutcome => ({
+    ok: false,
+    resumeFailed: false,
+    text: '',
+    stopped: true,
+    costUsd,
+    cacheReadTokens,
+    cacheCreationTokens,
+    modelUsage,
+    sessionId,
+  });
 
   // Wall-clock ceiling on the loop below (issue #826): an iteration that
   // never yields and never settles is invisible to the `catch` — only a race
@@ -1157,18 +1222,46 @@ export async function execTurn(
   // refused turn.
   const registeredIds = registeredToolIds();
   const expectedTools = options.allowedTools.filter((id) => registeredIds.has(id));
+  // Byte-identical to before when there is neither an image nor a signal:
+  // `prompt` stays the plain string. An image attachment (issue #783, gated
+  // well upstream of here — see config.discord.image /
+  // DiscordAdapter.maybeFetchImageAttachment) needs the single-message
+  // async-iterable form, and so does a module signal: `Query.interrupt()` is
+  // a control request, documented as supported only in streaming-input mode.
+  const turn = query({
+    prompt: image || signal ? promptStream(prompt, image) : prompt,
+    options: { ...options, abortController },
+  });
+  // Stop (a module's `signal`): interrupt first, so the CLI ends the model
+  // call and still emits its `result` with the cost; the loop below keeps
+  // reading and records it. If no result arrives within STOP_GRACE_MS, the
+  // abortController is the backstop and the race rejects.
+  let stopRequested = false;
+  let stopGraceHandle: ReturnType<typeof setTimeout> | undefined;
+  let onStop: (() => void) | undefined;
+  const stopped = new Promise<never>((_resolve, reject) => {
+    if (!signal) return;
+    onStop = () => {
+      stopRequested = true;
+      turn
+        .interrupt()
+        .catch((err: unknown) =>
+          logger.warn({ err, conversationId: caller.conversationId }, 'Interrupt on Stop failed; aborting'),
+        );
+      stopGraceHandle = setTimeout(() => {
+        abortController.abort();
+        reject(new AgentTurnStoppedError('agent turn stopped'));
+      }, STOP_GRACE_MS);
+    };
+    signal.addEventListener('abort', onStop, { once: true });
+  });
+  // The stop promise may never be awaited (no signal, or the loop finished
+  // first); it must never surface as an unhandled rejection.
+  stopped.catch(() => {});
   try {
     await Promise.race([
       (async () => {
-        for await (const message of query({
-          // Byte-identical to today when no image is attached (the overwhelming
-          // majority of turns): `prompt` stays the plain string. An image
-          // attachment (issue #783, gated well upstream of here — see
-          // config.discord.image / DiscordAdapter.maybeFetchImageAttachment)
-          // switches this to the single-message async-iterable form instead.
-          prompt: image ? imagePromptStream(prompt, image) : prompt,
-          options: { ...options, abortController },
-        })) {
+        for await (const message of turn) {
           switch (message.type) {
             case 'system':
               if (message.subtype === 'init') {
@@ -1271,8 +1364,16 @@ export async function execTurn(
           reject(new AgentTurnTimeoutError('agent turn timed out'));
         }, config.behaviour.agentTurnTimeoutMs);
       }),
+      stopped,
     ]);
   } catch (err) {
+    // A Stop outranks every other reading of the failure: whatever the CLI
+    // threw on its way down (the backstop abort, an interrupted stream), the
+    // person asked for it.
+    if (stopRequested) {
+      logger.info({ conversationId: caller.conversationId, costUsd }, 'Agent turn stopped');
+      return stoppedOutcome();
+    }
     if (err instanceof ToolInventoryError) {
       logger.error(
         {
@@ -1330,6 +1431,15 @@ export async function execTurn(
     };
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
+    if (stopGraceHandle) clearTimeout(stopGraceHandle);
+    if (onStop) signal?.removeEventListener('abort', onStop);
+  }
+
+  // Stopped, and the CLI answered the interrupt with its result in time. The
+  // result's text (if any) is a half-finished answer and never the reply.
+  if (stopRequested) {
+    logger.info({ conversationId: caller.conversationId, costUsd }, 'Agent turn stopped');
+    return stoppedOutcome();
   }
 
   if (resultSubtype && resultSubtype !== 'success') {
