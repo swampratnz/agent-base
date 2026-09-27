@@ -311,9 +311,12 @@ export function filterFeatureFlaggedTools(tools: string[]): string[] {
  * that environment is readable by the model, so strip the registered secret
  * VALUES out of the copy handed to the child.
  *
- * `CLAUDE_CODE_OAUTH_TOKEN` deliberately survives: the spawned Claude Code
- * binary authenticates with it (agent/auth.ts), so removing it would break the
- * turn outright.
+ * The model credential deliberately survives: the spawned Claude Code binary
+ * authenticates with it, so removing it would break the turn outright. That
+ * is `CLAUDE_CODE_OAUTH_TOKEN` in oauth mode, and `ANTHROPIC_AUTH_TOKEN` in
+ * gateway mode (agent-base G1), where the other two model credentials the CLI
+ * would read (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) are dropped, so
+ * the CLI can only authenticate to the gateway.
  *
  * This is defence-in-depth, NOT containment, and review was right to say the
  * first version of the docs invited over-reading it: the child runs as the
@@ -323,15 +326,21 @@ export function filterFeatureFlaggedTools(tools: string[]): string[] {
  * by design. It raises the cost of an accidental echo; it stops nothing
  * deliberate.
  */
-function shellSafeEnv(): Record<string, string | undefined> {
-  const secrets = new Set(runtimeSecrets().filter((value) => value.length >= 8));
-  const keep = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+export function shellSafeEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  auth: 'oauth' | 'gateway' = config.llm.auth,
+  secrets: readonly string[] = runtimeSecrets(),
+): Record<string, string | undefined> {
+  const drop = new Set(secrets.filter((value) => value.length >= 8));
+  const credential = auth === 'gateway' ? 'ANTHROPIC_AUTH_TOKEN' : 'CLAUDE_CODE_OAUTH_TOKEN';
+  const keep = env[credential];
   const out: Record<string, string | undefined> = {};
-  for (const [name, value] of Object.entries(process.env)) {
-    if (value !== undefined && secrets.has(value)) continue;
+  for (const [name, value] of Object.entries(env)) {
+    if (value !== undefined && drop.has(value)) continue;
+    if (auth === 'gateway' && (name === 'CLAUDE_CODE_OAUTH_TOKEN' || name === 'ANTHROPIC_API_KEY')) continue;
     out[name] = value;
   }
-  if (keep !== undefined) out.CLAUDE_CODE_OAUTH_TOKEN = keep;
+  if (keep !== undefined) out[credential] = keep;
   return out;
 }
 

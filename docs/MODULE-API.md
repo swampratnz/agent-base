@@ -303,6 +303,26 @@ explanation.
 "each command validates the slice it needs", and it is what let community-agent
 retire the dummy-token wrapper its migrate script used to require.
 
+### Model credential
+
+**live** (0.8.5, agent-base G1). `src/config/llm.ts`, `src/agent/core.ts`
+(`shellSafeEnv`), `src/agent/auth.ts`.
+
+`AGENT_MODEL_AUTH` chooses how the spawned Claude Code CLI reaches the model:
+
+| Mode | Needs | The CLI child gets |
+|---|---|---|
+| `oauth` (default; the only mode before 0.8.5) | `CLAUDE_CODE_OAUTH_TOKEN` | the subscription token |
+| `gateway` | `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`; `CLAUDE_CODE_OAUTH_TOKEN` must be **unset** | the gateway URL and token as its bearer; `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` are dropped from the armed child's env |
+
+In gateway mode the deployment holds only the gateway's token. The real
+Anthropic credential lives in the gateway, which meters and caps spend outside
+the process, so a shell in the turn cannot raise its own limit. The gateway
+token is registered in `runtimeSecrets()` (outbound redaction) and survives
+the armed child's secret strip, as the subscription token does in oauth mode.
+A gateway that refuses a request with a 429 surfaces to the person as the
+`usageLimitReply` notice, like any upstream usage limit.
+
 **Not yet:** there is no `configSchema` on the live manifest and no two-phase
 "parse env → hand each module its typed slice" init. `config` remains an
 import-time singleton, which is the chokepoint the plan lists first.

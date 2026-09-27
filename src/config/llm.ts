@@ -1,11 +1,23 @@
 import { z } from 'zod';
+import type { EnvRefinement } from './env.js';
 
 /** LLM / Claude slice (config.llm + config.agentSkills). */
 export const llmSlice = {
   // LLM / Claude
-  CLAUDE_CODE_OAUTH_TOKEN: z
-    .string()
-    .min(1, 'CLAUDE_CODE_OAUTH_TOKEN is required (run `claude setup-token`)'),
+  //
+  // How the spawned Claude Code CLI reaches the model (agent-base G1):
+  //  - 'oauth' (the default, and the only mode before 0.8.5): the Claude
+  //    subscription token from `claude setup-token`, in CLAUDE_CODE_OAUTH_TOKEN.
+  //  - 'gateway': a model gateway in front of the Anthropic API. The CLI is
+  //    pointed at ANTHROPIC_BASE_URL and sends ANTHROPIC_AUTH_TOKEN (the
+  //    gateway's per-deployment token) as its bearer. The real Anthropic
+  //    credential lives only in the gateway, so this process never holds it.
+  //    CLAUDE_CODE_OAUTH_TOKEN is refused in this mode, so a subscription
+  //    token cannot ride along into a deployment that is meant not to have one.
+  AGENT_MODEL_AUTH: z.enum(['oauth', 'gateway']).default('oauth'),
+  CLAUDE_CODE_OAUTH_TOKEN: z.string().optional(),
+  ANTHROPIC_BASE_URL: z.string().url().optional(),
+  ANTHROPIC_AUTH_TOKEN: z.string().optional(),
   AGENT_MODEL: z.string().default('claude-sonnet-5'),
   // Optional per-tier override of AGENT_MODEL for member/guest turns (issue
   // #382), mirroring AGENT_MAX_TURNS_MEMBER's role-tiering pattern applied to
@@ -100,3 +112,40 @@ export const llmSlice = {
     .optional()
     .transform((v) => v === 'true'),
 };
+
+type LlmEnv = {
+  // Optional here: the checks are `always`, so they may see a partial object.
+  AGENT_MODEL_AUTH?: 'oauth' | 'gateway' | undefined;
+  CLAUDE_CODE_OAUTH_TOKEN?: string | undefined;
+  ANTHROPIC_BASE_URL?: string | undefined;
+  ANTHROPIC_AUTH_TOKEN?: string | undefined;
+};
+
+export const llmRefinements: EnvRefinement<LlmEnv>[] = [
+  {
+    check: (e) => (e.AGENT_MODEL_AUTH ?? 'oauth') !== 'oauth' || !!e.CLAUDE_CODE_OAUTH_TOKEN,
+    always: true,
+    params: {
+      message: 'CLAUDE_CODE_OAUTH_TOKEN is required (run `claude setup-token`)',
+      path: ['CLAUDE_CODE_OAUTH_TOKEN'],
+    },
+  },
+  {
+    check: (e) => e.AGENT_MODEL_AUTH !== 'gateway' || (!!e.ANTHROPIC_BASE_URL && !!e.ANTHROPIC_AUTH_TOKEN),
+    always: true,
+    params: {
+      message: 'AGENT_MODEL_AUTH=gateway requires ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN',
+      path: ['AGENT_MODEL_AUTH'],
+    },
+  },
+  {
+    check: (e) => e.AGENT_MODEL_AUTH !== 'gateway' || !e.CLAUDE_CODE_OAUTH_TOKEN,
+    always: true,
+    params: {
+      message:
+        'AGENT_MODEL_AUTH=gateway refuses CLAUDE_CODE_OAUTH_TOKEN: the gateway holds the model credential, ' +
+        'so this deployment must not hold a subscription token as well',
+      path: ['CLAUDE_CODE_OAUTH_TOKEN'],
+    },
+  },
+];

@@ -7,7 +7,7 @@ import { dbSection, dbSlice } from './config/db.js';
 import { discordSlice } from './config/discord.js';
 import { integrationsRefinements, integrationsSlice } from './config/integrations.js';
 import { knowledgeRefinements, knowledgeSlice } from './config/knowledge.js';
-import { llmSlice } from './config/llm.js';
+import { llmRefinements, llmSlice } from './config/llm.js';
 import { logSection, logSlice } from './config/log.js';
 import { moderationSlice } from './config/moderation.js';
 import { rbacSlice } from './config/rbac.js';
@@ -49,6 +49,7 @@ type ParsedEnv = z.infer<typeof EnvSchema>;
 // and are applied to the merged schema here. Each one's predicate only sees
 // its own slice's keys by construction.
 const sliceRefinements: EnvRefinement<ParsedEnv>[] = [
+  ...llmRefinements,
   ...whatsappRefinements,
   ...behaviourRefinements,
   ...alertsRefinements,
@@ -57,7 +58,10 @@ const sliceRefinements: EnvRefinement<ParsedEnv>[] = [
 ];
 
 const EnvSchemaChecked = sliceRefinements
-  .reduce((schema, r) => schema.refine(r.check, r.params), EnvSchema)
+  .reduce(
+    (schema, r) => schema.refine(r.check, r.always ? { ...r.params, when: () => true } : r.params),
+    EnvSchema,
+  )
   .refine((e) => e.AGENT_TURN_TIMEOUT_MS > e.IMAGE_GEN_TIMEOUT_MS, {
     // The one CROSS-slice refine (behaviour vs integrations), so it lives
     // here rather than with either slice. The turn ceiling is the OUTER bound
@@ -78,7 +82,14 @@ const EnvSchemaChecked = sliceRefinements
 function buildConfig(env: ParsedEnv) {
   return {
     llm: {
-      oauthToken: env.CLAUDE_CODE_OAUTH_TOKEN,
+      /** 'oauth' (subscription token) or 'gateway' (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN). */
+      auth: env.AGENT_MODEL_AUTH,
+      /** The subscription token; empty in gateway mode. */
+      oauthToken: env.CLAUDE_CODE_OAUTH_TOKEN ?? '',
+      /** The model gateway's URL; undefined in oauth mode. */
+      gatewayBaseUrl: env.ANTHROPIC_BASE_URL,
+      /** This deployment's gateway token; empty in oauth mode. */
+      gatewayToken: env.AGENT_MODEL_AUTH === 'gateway' ? (env.ANTHROPIC_AUTH_TOKEN ?? '') : '',
       model: env.AGENT_MODEL,
       memberModel: env.AGENT_MODEL_MEMBER,
       classifierModel: env.AGENT_MODEL_CLASSIFIER,
