@@ -40,7 +40,7 @@
   "textAttachment.test.ts": 4,
   "toolLockdown.test.ts": 8,
   "toolSchemaRefusal.test.ts": 1,
-  "turnRuntime.test.ts": 4,
+  "turnRuntime.test.ts": 5,
   "untrustedEntryContent.test.ts": 1,
   "usageLimitNotice.test.ts": 2,
   "webSearchTierNone.test.ts": 1,

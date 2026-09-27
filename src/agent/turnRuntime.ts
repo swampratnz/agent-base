@@ -27,6 +27,16 @@ export interface TurnRuntime {
      */
     armingGate: boolean;
   };
+  /**
+   * Told the NAME of each built-in this turn runs, as it finishes (WattoBot
+   * #386): a module that counts what a turn is doing sees the module's own
+   * tools through its wrapper, and nothing of `Bash` or `Read`, which run in
+   * the CLI. Only a tool in `builtins.tools` (or the base's own list, absent
+   * a policy) is reported, and only its name: never its input or its output,
+   * which may carry a command line, a file's contents or a secret. A sink
+   * that throws is logged and ignored, because the tool has already run.
+   */
+  onBuiltinToolUse?: (use: BuiltinToolUse) => void;
   /** The CLI's working directory. G3 for a local CLI; for a remote one it must match where the CLI really runs, because the SDK keys transcripts by it. */
   cwd?: string;
   /** G2: the whole environment handed to the CLI, instead of the parent's. */
@@ -35,6 +45,11 @@ export interface TurnRuntime {
   spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess;
   /** G2: keep the CLI's transcripts in the parent (the SDK's `sessionStore`, alpha). */
   sessionStore?: SessionStore;
+}
+
+/** One built-in a turn ran: its name, and nothing it was given or gave back. */
+export interface BuiltinToolUse {
+  readonly tool: string;
 }
 
 /** What the base knows when it asks. */

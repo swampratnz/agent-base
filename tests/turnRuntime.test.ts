@@ -188,3 +188,54 @@ test('the control: with no list, every registered tool is on the server, so the 
   const client = await connect(server);
   assert.deepEqual((await client.listTools()).tools.map((t) => t.name).sort(), ['ask', 'moderate']);
 });
+
+type PostHooked = {
+  hooks?: {
+    PostToolUse?: Array<{ matcher: string; hooks: Array<(input: unknown) => Promise<unknown>> }>;
+  };
+};
+
+test('SECURITY: the built-in sink hears each granted built-in by NAME only, never its input or output (WattoBot #386)', async () => {
+  const heard: unknown[] = [];
+  const opts = buildQueryOptions('admin', 'p', {}, null, CONVO, 'web', 'u1', undefined, {
+    builtins: { tools: ['Bash', 'Read'], armingGate: false },
+    onBuiltinToolUse: (use) => heard.push(use),
+  }) as PostHooked;
+  const entry = opts.hooks?.PostToolUse?.find((h) => h.matcher === 'Bash|Read');
+  assert.ok(entry, 'one PostToolUse entry, matched to exactly the granted built-ins');
+  const fire = (payload: unknown) => entry.hooks[0](payload);
+  await fire({
+    hook_event_name: 'PostToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'cat /secrets/token' },
+    tool_response: { stdout: 'sk-live-XYZ' },
+  });
+  await fire({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_input: { file_path: '/etc/passwd' } });
+  // A name outside the turn's list is dropped, whatever the matcher let in.
+  await fire({ hook_event_name: 'PostToolUse', tool_name: 'mcp__t__ask', tool_input: {} });
+  await fire({ hook_event_name: 'PostToolUse', tool_name: 'WebFetch', tool_input: { url: 'https://x' } });
+  assert.deepEqual(heard, [{ tool: 'Bash' }, { tool: 'Read' }]);
+  assert.ok(!JSON.stringify(heard).includes('secrets') && !JSON.stringify(heard).includes('sk-live'));
+});
+
+test('a sink that throws never fails the hook, and a turn with no built-ins or no sink attaches nothing', async () => {
+  const throwing = buildQueryOptions('admin', 'p', {}, null, CONVO, 'web', 'u1', undefined, {
+    builtins: { tools: ['Bash'], armingGate: false },
+    onBuiltinToolUse: () => {
+      throw new Error('module bug');
+    },
+  }) as PostHooked;
+  const entry = throwing.hooks?.PostToolUse?.find((h) => h.matcher === 'Bash');
+  assert.ok(entry);
+  assert.deepEqual(await entry.hooks[0]({ tool_name: 'Bash' }), { continue: true });
+
+  const none = buildQueryOptions('admin', 'p', {}, null, CONVO, 'web', 'u1', undefined, {
+    builtins: { tools: [], armingGate: false },
+    onBuiltinToolUse: () => assert.fail('never called'),
+  }) as PostHooked;
+  assert.equal(none.hooks, undefined, 'no built-ins, no hook: the options are what they were');
+  const unsinked = buildQueryOptions('admin', 'p', {}, null, CONVO, 'web', 'u1', undefined, {
+    builtins: { tools: ['Bash'], armingGate: false },
+  }) as PostHooked;
+  assert.equal(unsinked.hooks, undefined, 'no sink, no hook');
+});

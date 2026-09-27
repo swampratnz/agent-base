@@ -654,6 +654,7 @@ export interface TurnRuntime {
   env?: Record<string, string | undefined>;                    // G2
   spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess; // G2
   sessionStore?: SessionStore;                                 // G2 (SDK alpha)
+  onBuiltinToolUse?: (use: { readonly tool: string }) => void;  // unreleased (WattoBot #386)
 }
 export type TurnRuntimeResolver = (request: { caller: CallerContext; armed: boolean }) =>
   TurnRuntime | undefined | Promise<TurnRuntime | undefined>;
@@ -671,6 +672,13 @@ turn's Claude Code CLI runs and what it is given:
   without a live arming by this actor in this conversation; `false` drops it,
   for a CLI whose tools run in a sandbox that is itself the containment. The
   WebSearch rate and dedup hooks follow `WebSearch` in the list.
+- **`onBuiltinToolUse` hears each built-in the turn runs, by name.** A
+  `PostToolUse` hook matched to exactly the turn's built-ins calls it with
+  `{ tool }` read off `tool_name`, and a name outside the list is dropped. The
+  tool's input and output never reach it, so a module can count what a code
+  turn is doing without holding a command line or a file's contents. A sink
+  that throws is logged and ignored. Absent, or with no built-ins, no hook is
+  attached. **Unreleased**: on this branch, not yet in a published version.
 - **`spawnClaudeCodeProcess`, `env`, `sessionStore` and `cwd` go to the SDK as
   given.** With `env` the CLI gets that environment and not the parent's. With
   no `env` and no `cwd`, a policy that grants a local tool other than

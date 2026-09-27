@@ -501,6 +501,55 @@ export function buildQueryOptions(
   const localShell = fullBuiltins || (policy?.tools.some((t) => t !== 'WebSearch') ?? false);
   const env = runtime?.env ?? (localShell ? shellSafeEnv() : undefined);
   const cwd = runtime?.cwd ?? (localShell ? shellCwd() : undefined);
+  // A module's sink for every built-in the turn runs (WattoBot #386): the
+  // NAME only, matched to exactly the built-ins this turn was granted, so a
+  // module tool (`mcp__…`) never reaches it and neither does anything the
+  // tool was given or gave back. Absent, or with no built-ins, nothing is
+  // attached and the options are what they always were.
+  const onBuiltinToolUse =
+    runtime?.onBuiltinToolUse && builtinTools.length > 0 ? runtime.onBuiltinToolUse : undefined;
+  const postToolUse = [
+    // Report each built-in WebSearch that actually ran to the caller
+    // (WattoBot #100): the query and the result URLs, read from the
+    // SDK's own PostToolUse payload. `execTurn` collects them onto
+    // `turnState.builtinWebSearches` so a module can fence, footer
+    // and attribute results that never crossed its tool wrapper.
+    // Absent when no sink is supplied (the synthetic test call sites).
+    ...(webSearch && onWebSearch
+      ? [
+          {
+            matcher: 'WebSearch',
+            hooks: [
+              async (input: unknown): Promise<HookJSONOutput> => {
+                onWebSearch(builtinWebSearchUse(input));
+                return { continue: true };
+              },
+            ],
+          },
+        ]
+      : []),
+    ...(onBuiltinToolUse
+      ? [
+          {
+            matcher: builtinTools.join('|'),
+            hooks: [
+              async (input: unknown): Promise<HookJSONOutput> => {
+                const tool = builtinToolName(input, builtinTools);
+                // A sink that throws is the module's bug, and must never
+                // become the turn's: the tool already ran.
+                if (tool)
+                  try {
+                    onBuiltinToolUse({ tool });
+                  } catch (err) {
+                    logger.warn({ err, conversationId }, 'onBuiltinToolUse sink threw; ignored');
+                  }
+                return { continue: true };
+              },
+            ],
+          },
+        ]
+      : []),
+  ];
   return {
     // Member/guest turns get the tiered AGENT_MODEL_MEMBER override when set
     // (issue #382), the same highest-volume/lowest-trust role split #347
@@ -567,133 +616,128 @@ export function buildQueryOptions(
           skills: [...skillsManifest().enabledSkills],
         }
       : {}),
-    ...(webSearch || armingGate
+    ...(webSearch || armingGate || postToolUse.length > 0
       ? {
           hooks: {
-            PreToolUse: [
-              ...(armingGate ? [mutatingBuiltinGate(platform, conversationId, actorUserId)] : []),
-              {
-                matcher: 'WebSearch',
-                hooks: [
-                  async (input: unknown): Promise<HookJSONOutput> => {
-                    // Fail closed: a thrown/rejected error while checking
-                    // either the dedup or the rate cap must never let the
-                    // call through unbounded — denies instead of relying on
-                    // any SDK default behaviour on a hook exception, which
-                    // this repo has never exercised before (issue #412
-                    // AC-5, extended to the dedup check by issue #589).
-                    try {
-                      const toolInput = (input as { tool_input?: unknown } | undefined)?.tool_input;
-                      const query =
-                        toolInput &&
-                        typeof toolInput === 'object' &&
-                        typeof (toolInput as { query?: unknown }).query === 'string'
-                          ? (toolInput as { query: string }).query
-                          : '';
-
-                      const dedupWindowMs = config.llm.webSearchDedupWindowSeconds * 1000;
-                      // The whole check -> volume-reserve -> record sequence is serialized per
-                      // conversation (issue #706 adversarial review): `await embed()` inside
-                      // `isDuplicateWebSearchQuery` is a genuine yield point, so without this lock
-                      // two WebSearch calls issued in the same turn could both pass the dedup
-                      // check before either records, racing past both the exact-match and
-                      // similarity guards. `withWebSearchDedupLock` restores the atomicity this
-                      // hook had before that `await` existed.
-                      return await withWebSearchDedupLock(conversationId, async () => {
-                        const { duplicate, embedding } = await isDuplicateWebSearchQuery(
-                          conversationId,
-                          query,
-                          dedupWindowMs,
-                          config.llm.webSearchDedupSimilarityThreshold,
-                        );
-                        if (duplicate) {
-                          return {
-                            continue: true,
-                            hookSpecificOutput: {
-                              hookEventName: 'PreToolUse',
-                              permissionDecision: 'deny',
-                              permissionDecisionReason:
-                                'You already searched for this in the last few minutes — use what you found.',
-                            },
-                          };
-                        }
-
-                        const allowed = reserveWebSearchSlot(
-                          conversationId,
-                          config.llm.webSearchRateLimitPerHour,
-                        );
-                        if (!allowed) {
-                          return {
-                            continue: true,
-                            hookSpecificOutput: {
-                              hookEventName: 'PreToolUse',
-                              permissionDecision: 'deny',
-                              permissionDecisionReason:
-                                'WebSearch already hit the conversation limit ' +
-                                `(${config.llm.webSearchRateLimitPerHour}/hour) — try again later.`,
-                            },
-                          };
-                        }
-
-                        // Only record once the call is actually going to proceed — recording a
-                        // query that then gets denied by the volume cap would poison the dedup
-                        // history with a search that never ran (issue #589 review). `embedding` is
-                        // the SAME vector isDuplicateWebSearchQuery already computed above — reused
-                        // rather than re-embedded (issue #706).
-                        recordWebSearchQuery(
-                          conversationId,
-                          query,
-                          dedupWindowMs,
-                          config.llm.webSearchDedupHistorySize,
-                          embedding,
-                        );
-                        return { continue: true };
-                      });
-                    } catch (err) {
-                      logger.error(
-                        { err, conversationId },
-                        'WebSearch rate-limit/dedup check threw — failing closed (denying the call)',
-                      );
-                      return {
-                        continue: true,
-                        hookSpecificOutput: {
-                          hookEventName: 'PreToolUse',
-                          permissionDecision: 'deny',
-                          permissionDecisionReason:
-                            'WebSearch is temporarily unavailable — an internal error occurred while ' +
-                            'checking the rate limit.',
-                        },
-                      };
-                    }
-                  },
-                ],
-              },
-            ],
-            // Report each built-in WebSearch that actually ran to the caller
-            // (WattoBot #100): the query and the result URLs, read from the
-            // SDK's own PostToolUse payload. `execTurn` collects them onto
-            // `turnState.builtinWebSearches` so a module can fence, footer
-            // and attribute results that never crossed its tool wrapper.
-            // Absent when no sink is supplied (the synthetic test call sites).
-            ...(webSearch && onWebSearch
+            ...(webSearch || armingGate
               ? {
-                  PostToolUse: [
+                  PreToolUse: [
+                    ...(armingGate ? [mutatingBuiltinGate(platform, conversationId, actorUserId)] : []),
                     {
                       matcher: 'WebSearch',
                       hooks: [
                         async (input: unknown): Promise<HookJSONOutput> => {
-                          onWebSearch(builtinWebSearchUse(input));
-                          return { continue: true };
+                          // Fail closed: a thrown/rejected error while checking
+                          // either the dedup or the rate cap must never let the
+                          // call through unbounded — denies instead of relying on
+                          // any SDK default behaviour on a hook exception, which
+                          // this repo has never exercised before (issue #412
+                          // AC-5, extended to the dedup check by issue #589).
+                          try {
+                            const toolInput = (input as { tool_input?: unknown } | undefined)?.tool_input;
+                            const query =
+                              toolInput &&
+                              typeof toolInput === 'object' &&
+                              typeof (toolInput as { query?: unknown }).query === 'string'
+                                ? (toolInput as { query: string }).query
+                                : '';
+
+                            const dedupWindowMs = config.llm.webSearchDedupWindowSeconds * 1000;
+                            // The whole check -> volume-reserve -> record sequence is serialized per
+                            // conversation (issue #706 adversarial review): `await embed()` inside
+                            // `isDuplicateWebSearchQuery` is a genuine yield point, so without this lock
+                            // two WebSearch calls issued in the same turn could both pass the dedup
+                            // check before either records, racing past both the exact-match and
+                            // similarity guards. `withWebSearchDedupLock` restores the atomicity this
+                            // hook had before that `await` existed.
+                            return await withWebSearchDedupLock(conversationId, async () => {
+                              const { duplicate, embedding } = await isDuplicateWebSearchQuery(
+                                conversationId,
+                                query,
+                                dedupWindowMs,
+                                config.llm.webSearchDedupSimilarityThreshold,
+                              );
+                              if (duplicate) {
+                                return {
+                                  continue: true,
+                                  hookSpecificOutput: {
+                                    hookEventName: 'PreToolUse',
+                                    permissionDecision: 'deny',
+                                    permissionDecisionReason:
+                                      'You already searched for this in the last few minutes — use what you found.',
+                                  },
+                                };
+                              }
+
+                              const allowed = reserveWebSearchSlot(
+                                conversationId,
+                                config.llm.webSearchRateLimitPerHour,
+                              );
+                              if (!allowed) {
+                                return {
+                                  continue: true,
+                                  hookSpecificOutput: {
+                                    hookEventName: 'PreToolUse',
+                                    permissionDecision: 'deny',
+                                    permissionDecisionReason:
+                                      'WebSearch already hit the conversation limit ' +
+                                      `(${config.llm.webSearchRateLimitPerHour}/hour) — try again later.`,
+                                  },
+                                };
+                              }
+
+                              // Only record once the call is actually going to proceed — recording a
+                              // query that then gets denied by the volume cap would poison the dedup
+                              // history with a search that never ran (issue #589 review). `embedding` is
+                              // the SAME vector isDuplicateWebSearchQuery already computed above — reused
+                              // rather than re-embedded (issue #706).
+                              recordWebSearchQuery(
+                                conversationId,
+                                query,
+                                dedupWindowMs,
+                                config.llm.webSearchDedupHistorySize,
+                                embedding,
+                              );
+                              return { continue: true };
+                            });
+                          } catch (err) {
+                            logger.error(
+                              { err, conversationId },
+                              'WebSearch rate-limit/dedup check threw — failing closed (denying the call)',
+                            );
+                            return {
+                              continue: true,
+                              hookSpecificOutput: {
+                                hookEventName: 'PreToolUse',
+                                permissionDecision: 'deny',
+                                permissionDecisionReason:
+                                  'WebSearch is temporarily unavailable — an internal error occurred while ' +
+                                  'checking the rate limit.',
+                              },
+                            };
+                          }
                         },
                       ],
                     },
                   ],
                 }
               : {}),
+            ...(postToolUse.length > 0 ? { PostToolUse: postToolUse } : {}),
           },
         }
       : {}),
   };
+}
+
+/**
+ * The built-in a PostToolUse payload names, if it is one of `granted`. Read
+ * off `tool_name` alone: `tool_input` and `tool_response` are what the tool
+ * was given and gave back, and neither leaves this function. A name outside
+ * the turn's list is dropped rather than trusted, whatever the matcher let in.
+ */
+export function builtinToolName(input: unknown, granted: readonly string[]): string | null {
+  const name = (input as { tool_name?: unknown } | null | undefined)?.tool_name;
+  return typeof name === 'string' && granted.includes(name) ? name : null;
 }
 
 /**
