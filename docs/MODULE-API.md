@@ -102,10 +102,11 @@ surface — completeness is required of the composition, not of any one module.
 | `resolveAuthority?` | authority resolver (once per process) | no; absent, every path reads the raw seat |
 | `resolveInteractionOrg?` | interaction organisation resolver (once per process) | no; absent, rows without an explicit `orgId` get NULL |
 | `admitGuild?` | Discord guild admitter (once per process) | no; absent, the adapter hears `DISCORD_GUILD_ID` alone |
+| `turnRuntime?` | turn runtime resolver (once per process) | no; absent, the CLI is a local child and the full built-in surface is an armed super admin's only |
 | `turnStateFinalizers?` · `policyKeys?` · `provenance?` · `purgeContributors?` · `preTurnIntercepts?` · `postTurnHandlers?` · `runtimeSecrets?` · `migrations?` | additive | no |
 
 The eight required singleton rows plus `personas` are the nine `assertRegistrationsComplete()`
-probes (`resolveAuthority`, `resolveInteractionOrg` and `admitGuild` are singletons too — two claimants are refused — but optional); a composition missing any of them is refused with every gap named at
+probes (`resolveAuthority`, `resolveInteractionOrg`, `admitGuild` and `turnRuntime` are singletons too — two claimants are refused — but optional); a composition missing any of them is refused with every gap named at
 once. The additive rows are appended, and base owns the iteration order inside
 each (see the per-registry sections below).
 
@@ -638,6 +639,55 @@ check in the adapter and slash dispatch goes through `guildAdmission.ts`:
   tightening: slash dispatch now drops an interaction from a guild that is not
   admitted even with no hook. That could only happen through a stale
   registration, since the base has only ever registered in the home guild.
+
+### Turn runtime (G2, G3)
+
+**live** (0.8.6). `src/agent/turnRuntime.ts`, registered through the
+manifest's `turnRuntime` field.
+
+```ts
+export interface TurnRuntime {
+  builtins?: { tools: readonly string[]; armingGate: boolean }; // G3
+  cwd?: string;
+  env?: Record<string, string | undefined>;                    // G2
+  spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess; // G2
+  sessionStore?: SessionStore;                                 // G2 (SDK alpha)
+}
+export type TurnRuntimeResolver = (request: { caller: CallerContext; armed: boolean }) =>
+  TurnRuntime | undefined | Promise<TurnRuntime | undefined>;
+```
+
+Asked once per turn, before the tool server is built. It says where the
+turn's Claude Code CLI runs and what it is given:
+
+- **`builtins` replaces the base's rule** (WebSearch for admin+, every built-in
+  for an armed super admin). The list is the whole built-in surface, WebSearch
+  included: `tools` and `allowedTools` carry exactly it, and `disallowedTools`
+  carries whichever of `Task`, `WebFetch` and `WebSearch` it left out. A name
+  that is not in `ALL_BUILTIN_TOOLS` fails the turn. `armingGate: true` keeps
+  the `PreToolUse` hook that denies `Bash`, `Write`, `Edit` and `NotebookEdit`
+  without a live arming by this actor in this conversation; `false` drops it,
+  for a CLI whose tools run in a sandbox that is itself the containment. The
+  WebSearch rate and dedup hooks follow `WebSearch` in the list.
+- **`spawnClaudeCodeProcess`, `env`, `sessionStore` and `cwd` go to the SDK as
+  given.** With `env` the CLI gets that environment and not the parent's. With
+  no `env` and no `cwd`, a policy that grants a local tool other than
+  WebSearch gets the armed turn's `shellSafeEnv()` and working directory. A
+  remote CLI must be given the `cwd` it really runs in, because the SDK keys a
+  transcript by it; and with a `sessionStore`, the CLI's `CLAUDE_CONFIG_DIR`
+  must be the same path in both places, because the SDK maps each mirrored
+  transcript line back by it.
+- **A throw or a rejection fails the turn** with the internal-error notice.
+  It never falls back to the default, so a module that cannot say where the
+  CLI runs does not get it run on the host.
+- **Undefined means the defaults**, byte for byte.
+
+Independently of the resolver, **the tool server attaches only the turn's own
+tools** (`buildToolServer`'s `attach`, from `turnModuleToolIds(role,
+platform)`, the list `allowedTools` is built from). Before 0.8.6 it attached
+every registered tool and relied on the CLI's `allowedTools`; a CLI that sends
+a tool call of its own over the control channel reached any of them. Now such
+a call finds no such tool.
 
 ---
 

@@ -84,6 +84,7 @@ import type { RuntimeSecretGetter } from './agent/secrets.js';
 import { registerRuntimeSecret } from './agent/secrets.js';
 import type { AuthorityResolver } from './auth/roles.js';
 import { registerAuthorityResolver } from './auth/roles.js';
+import { registerTurnRuntimeResolver, type TurnRuntimeResolver } from './agent/turnRuntime.js';
 import type { InteractionOrgResolver } from './storage/repository/interactions.js';
 import { registerInteractionOrgResolver } from './storage/repository/interactions.js';
 import { registerGuildAdmitter, type GuildAdmitter } from './platforms/discord/guildAdmission.js';
@@ -173,6 +174,14 @@ export interface AgentModule<Ctx = unknown> {
    * See `GuildAdmitter` in platforms/discord/guildAdmission.ts.
    */
   admitGuild?: GuildAdmitter;
+  /**
+   * OPTIONAL (G2, G3): per turn, where the Claude Code CLI runs (a spawn
+   * function, its environment, a transcript store) and which built-in tools it
+   * gets. Absent, the CLI is a local child and the full built-in surface exists
+   * only inside an armed super-admin window, as before. See `TurnRuntime` in
+   * agent/turnRuntime.ts.
+   */
+  turnRuntime?: TurnRuntimeResolver;
 
   // --- additive registries -------------------------------------------------
   personas?: readonly { persona: Persona; isDefault?: boolean }[];
@@ -363,6 +372,7 @@ const SINGLETONS: readonly { registry: string; field: keyof AgentModule }[] = Ob
   { registry: 'authority resolver', field: 'resolveAuthority' },
   { registry: 'interaction organisation resolver', field: 'resolveInteractionOrg' },
   { registry: 'guild admitter', field: 'admitGuild' },
+  { registry: 'turn runtime resolver', field: 'turnRuntime' },
 ]);
 
 /**
@@ -434,6 +444,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<Agent> {
     if (mod.resolveAuthority) registerAuthorityResolver(mod.resolveAuthority);
     if (mod.resolveInteractionOrg) registerInteractionOrgResolver(mod.resolveInteractionOrg);
     if (mod.admitGuild) registerGuildAdmitter(mod.admitGuild);
+    if (mod.turnRuntime) registerTurnRuntimeResolver(mod.turnRuntime);
   }
 
   // 4. additive registries. Base owns ITERATION order inside each of these
