@@ -103,10 +103,11 @@ surface — completeness is required of the composition, not of any one module.
 | `resolveInteractionOrg?` | interaction organisation resolver (once per process) | no; absent, rows without an explicit `orgId` get NULL |
 | `admitGuild?` | Discord guild admitter (once per process) | no; absent, the adapter hears `DISCORD_GUILD_ID` alone |
 | `turnRuntime?` | turn runtime resolver (once per process) | no; absent, the CLI is a local child and the full built-in surface is an armed super admin's only |
+| `usageLimitNotice?` | usage limit notice resolver (once per process) | no; absent, a usage-limit failure is answered with the `usageLimitReply` notice |
 | `turnStateFinalizers?` · `policyKeys?` · `provenance?` · `purgeContributors?` · `preTurnIntercepts?` · `postTurnHandlers?` · `runtimeSecrets?` · `migrations?` | additive | no |
 
 The eight required singleton rows plus `personas` are the nine `assertRegistrationsComplete()`
-probes (`resolveAuthority`, `resolveInteractionOrg`, `admitGuild` and `turnRuntime` are singletons too — two claimants are refused — but optional); a composition missing any of them is refused with every gap named at
+probes (`resolveAuthority`, `resolveInteractionOrg`, `admitGuild`, `turnRuntime` and `usageLimitNotice` are singletons too — two claimants are refused — but optional); a composition missing any of them is refused with every gap named at
 once. The additive rows are appended, and base owns the iteration order inside
 each (see the per-registry sections below).
 
@@ -322,7 +323,8 @@ the process, so a shell in the turn cannot raise its own limit. The gateway
 token is registered in `runtimeSecrets()` (outbound redaction) and survives
 the armed child's secret strip, as the subscription token does in oauth mode.
 A gateway that refuses a request with a 429 surfaces to the person as the
-`usageLimitReply` notice, like any upstream usage limit.
+`usageLimitReply` notice, like any upstream usage limit, unless the module's
+`usageLimitNotice` resolver has a sentence of its own (§ Usage limit notice).
 
 **Not yet:** there is no `configSchema` on the live manifest and no two-phase
 "parse env → hand each module its typed slice" init. `config` remains an
@@ -688,6 +690,38 @@ platform)`, the list `allowedTools` is built from). Before 0.8.6 it attached
 every registered tool and relied on the CLI's `allowedTools`; a CLI that sends
 a tool call of its own over the control channel reached any of them. Now such
 a call finds no such tool.
+
+### Usage limit notice
+
+**live** (0.8.7). `src/agent/usageLimitNotice.ts`, registered through the
+manifest's `usageLimitNotice` field.
+
+```ts
+export type UsageLimitNoticeResolver = (request: { caller: CallerContext }) =>
+  string | undefined | Promise<string | undefined>;
+```
+
+Asked when a turn fails and the failure classifies as a usage limit
+(`isUsageLimitFailure`). A module that reaches the model through a gateway
+knows things the base does not: whose budget was used up, and the day it
+resets. Its sentence is said in place of the catalogue's `usageLimitReply`.
+
+- **The resolver gets the caller and nothing else.** It is never handed the
+  error, so its answer is composed from what the module trusts (its own read
+  of the gateway's budget), and the base still echoes no upstream text.
+- **It cannot fail the reply.** A throw, a rejection, an answer after 3
+  seconds, an empty string, anything that is not a string, more than 600
+  characters, or a control character other than tab and line breaks all get
+  the default notice.
+- **`undefined` means the default**, which is how a module says the limit was
+  not its own (the upstream's shared pool, an overload).
+- **A sentence from the module turns the upstream alert off for that turn.**
+  The super-admin "usage limit" alert is about the shared upstream pool. A
+  limit the module answers for is the deployment's own, so nobody is alerted
+  and the reply does not say they were.
+- The sentence is the module's, in whatever language it chose: the catalogue's
+  language and style variants are not applied to it. It leaves through the
+  adapter's outbound filter like any reply.
 
 ---
 

@@ -42,6 +42,7 @@ import {
 import { selectPersona } from './personaRegistry.js';
 import { buildToolServer, registeredToolIds, toolServerName } from './toolServer.js';
 import { resolveTurnRuntime, type TurnRuntime } from './turnRuntime.js';
+import { resolveUsageLimitNotice } from './usageLimitNotice.js';
 import type { ToolServerTurnState } from './turnState.js';
 import { flaggedToolPredicates } from './featureFlags.js';
 import {
@@ -202,6 +203,11 @@ interface TurnOutcome {
    */
   text: string;
   fallbackNoticeId?: FallbackNoticeId;
+  /**
+   * The module's own sentence for a usage-limit failure (its
+   * `usageLimitNotice` resolver), said in place of the catalogue's notice.
+   */
+  moduleNotice?: string;
   costUsd?: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
@@ -998,7 +1004,8 @@ export async function runAgentTurn(
   // passed RAW and no locale value is named here.
   const text =
     !outcome.ok && outcome.fallbackNoticeId
-      ? notice(outcome.fallbackNoticeId, { language: languagePreference, style: responseStyle })
+      ? (outcome.moduleNotice ??
+        notice(outcome.fallbackNoticeId, { language: languagePreference, style: responseStyle }))
       : outcome.text;
 
   return {
@@ -1494,9 +1501,21 @@ export async function execTurn(
     // the SDK/CLI's own error message, never user-supplied text, and always
     // returns a fixed string (the raw error is never echoed).
     const usageLimitHit = isUsageLimitFailure(msg);
-    noteUsageLimitOutcome(usageLimitHit, adapter, caller.conversationId, getAdapter);
+    // The module may know whose limit it was and when it resets (a gateway's
+    // weekly budget). It is asked with the caller only, never the error, so
+    // what it answers is its own sentence and not an echo.
+    const moduleNotice = usageLimitHit ? await resolveUsageLimitNotice({ caller }) : undefined;
+    // A limit the module answers for is the deployment's own, not the
+    // upstream's: nobody is alerted about the shared pool, and the reply does
+    // not say they were.
+    noteUsageLimitOutcome(
+      usageLimitHit && moduleNotice === undefined,
+      adapter,
+      caller.conversationId,
+      getAdapter,
+    );
     const fallbackNoticeId: FallbackNoticeId = usageLimitHit
-      ? config.behaviour.upstreamLimitAlertEnabled
+      ? config.behaviour.upstreamLimitAlertEnabled && moduleNotice === undefined
         ? 'usageLimitReplyAdminNotified'
         : 'usageLimitReply'
       : 'internalErrorReply';
@@ -1504,8 +1523,9 @@ export async function execTurn(
       ok: false,
       // Heuristic: resume failures surface as errors mentioning the session.
       resumeFailed: resumeSession != null && /session|resume/i.test(msg),
-      text: notice(fallbackNoticeId),
+      text: moduleNotice ?? notice(fallbackNoticeId),
       fallbackNoticeId,
+      ...(moduleNotice !== undefined ? { moduleNotice } : {}),
     };
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
