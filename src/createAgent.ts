@@ -85,6 +85,7 @@ import { registerRuntimeSecret } from './agent/secrets.js';
 import type { AuthorityResolver } from './auth/roles.js';
 import { registerAuthorityResolver } from './auth/roles.js';
 import { registerTurnRuntimeResolver, type TurnRuntimeResolver } from './agent/turnRuntime.js';
+import { registerUsageLimitNoticeResolver, type UsageLimitNoticeResolver } from './agent/usageLimitNotice.js';
 import type { InteractionOrgResolver } from './storage/repository/interactions.js';
 import { registerInteractionOrgResolver } from './storage/repository/interactions.js';
 import { registerGuildAdmitter, type GuildAdmitter } from './platforms/discord/guildAdmission.js';
@@ -182,6 +183,15 @@ export interface AgentModule<Ctx = unknown> {
    * agent/turnRuntime.ts.
    */
   turnRuntime?: TurnRuntimeResolver;
+  /**
+   * OPTIONAL: the sentence a person gets when a turn fails on a usage limit,
+   * for a module that knows whose limit it was and when it resets (a model
+   * gateway's weekly budget). Asked with the caller only, never the error.
+   * Absent or answering `undefined`, the reply is the `usageLimitReply`
+   * notice, as before. See `UsageLimitNoticeResolver` in
+   * agent/usageLimitNotice.ts.
+   */
+  usageLimitNotice?: UsageLimitNoticeResolver;
 
   // --- additive registries -------------------------------------------------
   personas?: readonly { persona: Persona; isDefault?: boolean }[];
@@ -373,6 +383,7 @@ const SINGLETONS: readonly { registry: string; field: keyof AgentModule }[] = Ob
   { registry: 'interaction organisation resolver', field: 'resolveInteractionOrg' },
   { registry: 'guild admitter', field: 'admitGuild' },
   { registry: 'turn runtime resolver', field: 'turnRuntime' },
+  { registry: 'usage limit notice resolver', field: 'usageLimitNotice' },
 ]);
 
 /**
@@ -445,6 +456,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<Agent> {
     if (mod.resolveInteractionOrg) registerInteractionOrgResolver(mod.resolveInteractionOrg);
     if (mod.admitGuild) registerGuildAdmitter(mod.admitGuild);
     if (mod.turnRuntime) registerTurnRuntimeResolver(mod.turnRuntime);
+    if (mod.usageLimitNotice) registerUsageLimitNoticeResolver(mod.usageLimitNotice);
   }
 
   // 4. additive registries. Base owns ITERATION order inside each of these

@@ -159,6 +159,12 @@ stay tier-derived. A deployment that grants the shell without the arming gate
 must be running the CLI somewhere that is itself the containment; the base
 cannot check that, and the module owns it.
 
+A module's usage limit notice (MODULE-API.md § Usage limit notice) replaces
+one fixed notice with the module's sentence. It does not open the invariant
+that a failed turn never echoes upstream text: the resolver is handed the
+caller and never the error, its answer is bounded and checked, and it is sent
+through the same outbound filter as every reply.
+
 Skills load only from code-reviewed local directories under an explicit
 allowlist — **never** a wildcard. A wildcard would let a skill file added later
 self-activate without the deliberate second edit an allowlist requires.

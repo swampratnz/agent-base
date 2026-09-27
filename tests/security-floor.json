@@ -42,6 +42,7 @@
   "toolSchemaRefusal.test.ts": 1,
   "turnRuntime.test.ts": 4,
   "untrustedEntryContent.test.ts": 1,
+  "usageLimitNotice.test.ts": 2,
   "webSearchTierNone.test.ts": 1,
   "whatsappCloudWire.test.ts": 8,
   "whatsappLidMap.test.ts": 2,
