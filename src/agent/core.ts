@@ -41,6 +41,7 @@ import {
 } from './systemPrompt.js';
 import { selectPersona } from './personaRegistry.js';
 import { buildToolServer, registeredToolIds, toolServerName } from './toolServer.js';
+import { resolveTurnRuntime, type TurnRuntime } from './turnRuntime.js';
 import type { ToolServerTurnState } from './turnState.js';
 import { flaggedToolPredicates } from './featureFlags.js';
 import {
@@ -430,6 +431,15 @@ function mutatingBuiltinGate(platform: Platform, conversationId: string, actorUs
   };
 }
 
+/**
+ * The module tool ids a turn at `role` on `platform` may call: the tier list,
+ * less feature-flagged tools. Both the CLI's `allowedTools` and the tool
+ * server the turn attaches (G3) are built from this one list.
+ */
+export function turnModuleToolIds(role: CallerContext['role'], platform: Platform): string[] {
+  return filterFeatureFlaggedTools(toolsForRole(role, platform));
+}
+
 export function buildQueryOptions(
   role: CallerContext['role'],
   systemPrompt: string,
@@ -439,13 +449,14 @@ export function buildQueryOptions(
   platform: Platform = 'discord',
   actorUserId: string = '',
   onWebSearch?: (use: BuiltinWebSearchUse) => void,
+  runtime?: TurnRuntime,
 ) {
   // Web search is a privileged capability: admin+ by default, raisable to
   // super_admin only, or withheld from every tier with
   // AGENT_WEB_SEARCH_TIER=none (WattoBot #100). Every branch below that
   // grants, pre-approves, disallows or hooks WebSearch keys off this one
   // boolean, so 'none' removes the built-in and its hooks together.
-  const webSearch = config.llm.webSearchTier !== 'none' && atLeast(role, config.llm.webSearchTier);
+  const tierWebSearch = config.llm.webSearchTier !== 'none' && atLeast(role, config.llm.webSearchTier);
   // The full Agent SDK built-in surface is super-admin only, by the owner's
   // explicit decision (community-agent#1405 follow-up), and only inside an
   // ARMED window. Every other tier — and an UNARMED super admin — keeps the
@@ -460,8 +471,30 @@ export function buildQueryOptions(
   // through the outbound secret redaction either.
   //
   // Empty `actorUserId` (the synthetic test call sites) fails closed.
-  const fullBuiltins =
+  const armed =
     role === 'super_admin' && actorUserId !== '' && isMutatingArmed(platform, conversationId, actorUserId);
+  // G3: a module's turn runtime may decide the built-in surface instead. Its
+  // list replaces both rules above, WebSearch included, and its `armingGate`
+  // says whether the mutating tools still need a live arming.
+  const policy = runtime?.builtins;
+  const webSearch = policy ? policy.tools.includes('WebSearch') : tierWebSearch;
+  const fullBuiltins = policy ? false : armed;
+  const builtinTools: readonly string[] = policy
+    ? policy.tools
+    : fullBuiltins
+      ? ALL_BUILTIN_TOOLS
+      : webSearch
+        ? ['WebSearch']
+        : [];
+  const armingGate = policy
+    ? policy.armingGate && policy.tools.some((t) => MUTATING_BUILTIN_TOOLS.includes(t))
+    : fullBuiltins;
+  // The CLI's environment: a module's (G2) replaces the parent's whole; else,
+  // inside an armed window, the parent's with the registered secret values
+  // stripped (`shellSafeEnv`); else the SDK's default, the parent's.
+  const localShell = fullBuiltins || (policy?.tools.some((t) => t !== 'WebSearch') ?? false);
+  const env = runtime?.env ?? (localShell ? shellSafeEnv() : undefined);
+  const cwd = runtime?.cwd ?? (localShell ? shellCwd() : undefined);
   return {
     // Member/guest turns get the tiered AGENT_MODEL_MEMBER override when set
     // (issue #382), the same highest-volume/lowest-trust role split #347
@@ -480,10 +513,7 @@ export function buildQueryOptions(
     // (issue #741) — uniformly, no tier gating, matching the ungated
     // prompt-review checklist this replaces. `allowedTools` alone only
     // auto-approves; this list is what actually restricts the surface.
-    tools: [
-      ...(fullBuiltins ? ALL_BUILTIN_TOOLS : webSearch ? ['WebSearch'] : []),
-      ...(config.agentSkills.enabled ? ['Skill'] : []),
-    ],
+    tools: [...builtinTools, ...(config.agentSkills.enabled ? ['Skill'] : [])],
     // Deliberately NOT adding 'Skill' here, unlike WebSearch above: the
     // installed SDK's own type declarations (sdk.d.ts, pinned at
     // @anthropic-ai/claude-agent-sdk@0.3.220) document that passing 'Skill'
@@ -494,14 +524,12 @@ export function buildQueryOptions(
     // wording still present in the vendored .d.ts so an SDK upgrade that
     // silently drops the guarantee fails CI instead of shipping a Skill
     // tool that's granted in `tools` but never actually approved to fire.
-    allowedTools: [
-      ...filterFeatureFlaggedTools(toolsForRole(role, platform)),
-      ...(fullBuiltins ? ALL_BUILTIN_TOOLS : webSearch ? ['WebSearch'] : []),
-    ],
+    allowedTools: [...turnModuleToolIds(role, platform), ...builtinTools],
     // Nothing is disallowed inside an armed super-admin window (the surface it
     // was armed for IS the full set); every other turn, including an unarmed
-    // super admin's, keeps the all-tier Task/WebFetch ban.
-    disallowedTools: fullBuiltins ? [] : ['Task', 'WebFetch', ...(webSearch ? [] : ['WebSearch'])],
+    // super admin's, keeps the all-tier Task/WebFetch ban. Under a module's
+    // policy (G3) the ban covers exactly what the policy left out.
+    disallowedTools: ['Task', 'WebFetch', 'WebSearch'].filter((t) => !builtinTools.includes(t)),
     permissionMode: 'default' as const,
     // Member/guest turns get a tighter loop-depth ceiling than admin+
     // (issue #347): MEMBER_TOOLS is a much narrower surface, so a
@@ -514,7 +542,12 @@ export function buildQueryOptions(
     // Only inside an armed window: point the file tools at a working directory
     // and strip the registered secret VALUES from the child's environment.
     // Neither is containment — see the `shellCwd`/`shellSafeEnv` notes.
-    ...(fullBuiltins ? { cwd: shellCwd(), env: shellSafeEnv() } : {}),
+    ...(cwd !== undefined ? { cwd } : {}),
+    ...(env !== undefined ? { env } : {}),
+    // G2: where the CLI runs and where its transcripts live, when the module
+    // says. Absent, the keys are absent and the SDK spawns a local child.
+    ...(runtime?.spawnClaudeCodeProcess ? { spawnClaudeCodeProcess: runtime.spawnClaudeCodeProcess } : {}),
+    ...(runtime?.sessionStore ? { sessionStore: runtime.sessionStore } : {}),
     // Agent Skills (issue #741): loads exactly the registered skills
     // manifest — the repo-bundled plugin directory and the literal
     // hand-written allowlist (enabledSkills.ts), with the never-'all'
@@ -528,11 +561,11 @@ export function buildQueryOptions(
           skills: [...skillsManifest().enabledSkills],
         }
       : {}),
-    ...(webSearch || fullBuiltins
+    ...(webSearch || armingGate
       ? {
           hooks: {
             PreToolUse: [
-              ...(fullBuiltins ? [mutatingBuiltinGate(platform, conversationId, actorUserId)] : []),
+              ...(armingGate ? [mutatingBuiltinGate(platform, conversationId, actorUserId)] : []),
               {
                 matcher: 'WebSearch',
                 hooks: [
@@ -1165,7 +1198,42 @@ export async function execTurn(
   // key is optional, and the registered finalizer treats absent exactly like
   // the old false/null/[] initializers.
   const turnState: ToolServerTurnState = {};
-  const toolServer = buildToolServer(caller, adapter, getAdapter, turnState);
+  // G2/G3: the module's word on where the CLI runs and what built-ins it has.
+  // Asked before anything is built. A failure fails the turn: a module that
+  // cannot say where the CLI runs must not have it run here by default.
+  let runtime: TurnRuntime | undefined;
+  try {
+    runtime = await resolveTurnRuntime({
+      caller,
+      armed:
+        caller.role === 'super_admin' &&
+        caller.userId !== '' &&
+        isMutatingArmed(caller.platform, caller.conversationId, caller.userId),
+    });
+  } catch (err) {
+    logger.error(
+      { err, conversationId: caller.conversationId },
+      'Turn runtime not resolved; the turn does not run',
+    );
+    return {
+      ok: false,
+      resumeFailed: false,
+      text: notice('internalErrorReply'),
+      fallbackNoticeId: 'internalErrorReply',
+    };
+  }
+  // SECURITY (G3): the server attaches only the tools this turn may call. The
+  // CLI's `allowedTools` restricts what the model is offered, but the CLI is
+  // not trusted to hold to it: a CLI in a sandbox can send a tool call of its
+  // own over the control channel, and the SDK serves any tool the server has.
+  const toolServer = buildToolServer(
+    caller,
+    adapter,
+    getAdapter,
+    turnState,
+    undefined,
+    turnModuleToolIds(caller.role, caller.platform),
+  );
   // Built-in WebSearch runs this turn, reported by the PostToolUse hook
   // buildQueryOptions attaches (WattoBot #100); surfaced on the success bag
   // below under the same absent-not-empty discipline as the module keys.
@@ -1223,6 +1291,7 @@ export async function execTurn(
     caller.platform,
     caller.userId,
     (use) => webSearches.push(use),
+    runtime,
   );
   // The registered tools this turn was allowed: every one of them must come
   // back in the SDK's `init` message, or the server was dropped (WattoBot

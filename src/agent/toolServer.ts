@@ -205,15 +205,20 @@ export function buildToolServer(
   getAdapter?: AdapterLookup,
   turnState?: ToolServerTurnState,
   getLangPref: typeof getLanguagePreference = getLanguagePreference,
+  attach?: readonly string[],
 ) {
   const { name, registry, makeContext } = registeredParts();
   const ctx = makeContext(caller, adapter, getAdapter, turnState, getLangPref);
-  // Attach everything; the per-turn allowedTools list (rbac.toolsForRole) is
-  // what actually restricts which of these the model can call.
+  // `attach` (G3): the fully-qualified ids this turn may call. Only those are
+  // on the server, so a tool call the CLI sends outside its `allowedTools`
+  // finds no such tool. Absent, every registered tool is attached and the
+  // CLI's `allowedTools` is the only restriction, as before.
+  const allowed = attach ? new Set(attach) : null;
+  const defs = allowed ? registry.filter((def) => allowed.has(`mcp__${name}__${def.name}`)) : registry;
   return createSdkMcpServer({
     name,
     version: '2.0.0',
-    tools: registry.map((def) =>
+    tools: defs.map((def) =>
       tool(def.name, def.description, def.schema, (args) => def.handler(args, ctx), {
         annotations: { readOnlyHint: def.readOnlyHint },
       }),

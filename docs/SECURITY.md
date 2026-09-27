@@ -145,7 +145,19 @@ the first version both under-gated and overstated:
   group is the exposure that matters — keep it short, and prefer a DM.
 
 Note that pre-approving tools is not restricting them. The restriction comes
-from the tool list attached to the turn.
+from the tool list attached to the turn. Since 0.8.6 that is literal for module
+tools too: the turn's MCP server carries only the tools `allowedTools` names
+(`turnModuleToolIds`), so a CLI that sends a tool call of its own over the
+control channel, which a CLI running in a sandbox can, finds no such tool.
+Before 0.8.6 every registered tool was on the server, and only privileged
+handlers re-asserted the tier.
+
+A module's turn runtime (MODULE-API.md § Turn runtime, G2 and G3) can replace
+the built-in rule above for its turns: which built-ins, whether the arming gate
+applies, and where the CLI runs. It cannot widen a turn's module tools, which
+stay tier-derived. A deployment that grants the shell without the arming gate
+must be running the CLI somewhere that is itself the containment; the base
+cannot check that, and the module owns it.
 
 Skills load only from code-reviewed local directories under an explicit
 allowlist — **never** a wildcard. A wildcard would let a skill file added later
