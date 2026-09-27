@@ -37,4 +37,12 @@ export const normalizedEnv = emptyStringsToUndefined(process.env);
 export interface EnvRefinement<E> {
   check: (e: E) => unknown;
   params: { message: string; path: string[] };
+  /**
+   * Run even when another field already failed. Zod skips an object-level
+   * refine once any field has an issue, so a required-credential rule that
+   * moved from a field to a refine would otherwise vanish from the error
+   * whenever something else is also wrong. The check then sees a partial
+   * object, so it must treat any key as possibly absent.
+   */
+  always?: boolean;
 }

@@ -36,6 +36,9 @@ export function registerRuntimeSecret(getter: RuntimeSecretGetter): void {
 export function runtimeSecrets(): string[] {
   return [
     config.llm.oauthToken,
+    // The model gateway's token (AGENT_MODEL_AUTH=gateway, G1). It spends only
+    // this deployment's capped budget, but it is still a credential.
+    config.llm.gatewayToken,
     config.discord.botToken,
     config.db.url,
     config.whatsapp.cloud.accessToken ?? '',

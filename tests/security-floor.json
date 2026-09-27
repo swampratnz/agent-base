@@ -14,6 +14,7 @@
   "knowledgeCandidateDedupDegradation.test.ts": 1,
   "knowledgeScope.test.ts": 4,
   "memberId.test.ts": 3,
+  "modelAuth.test.ts": 3,
   "moderationRepo.test.ts": 4,
   "noticeCatalogue.test.ts": 1,
   "outbound.test.ts": 8,

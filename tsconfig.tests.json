@@ -75,6 +75,7 @@
     "tests/knowledgeDuplicateDegradation.test.ts",
     "tests/memberId.test.ts",
     "tests/mergeKnowledgeEmbedCount.test.ts",
+    "tests/modelAuth.test.ts",
     "tests/moderationRepo.test.ts",
     "tests/moduleApi.test.ts",
     "tests/mutedRoleAlertNotice.test.ts",

@@ -130,8 +130,9 @@ the first version both under-gated and overstated:
   bounds when an injection can strike, not how long the consequence lasts.
 - **Stripping secrets from the child environment is defence-in-depth, not
   containment.** The child gets `process.env` minus every registered secret
-  VALUE (`runtimeSecrets()`), except `CLAUDE_CODE_OAUTH_TOKEN`, which the CLI
-  needs. But it runs as the same uid, so an armed shell can read the parent's
+  VALUE (`runtimeSecrets()`), except the model credential the CLI needs:
+  `CLAUDE_CODE_OAUTH_TOKEN`, or `ANTHROPIC_AUTH_TOKEN` in gateway mode, where
+  the subscription token and `ANTHROPIC_API_KEY` are dropped as well. But it runs as the same uid, so an armed shell can read the parent's
   `/proc/<pid>/environ` or `cat` the `.env` directly. Values under 8 chars are
   kept by design.
 - **Outbound redaction does not cover a shell's own egress.** `redactSecrets`
