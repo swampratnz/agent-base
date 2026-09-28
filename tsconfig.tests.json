@@ -56,6 +56,7 @@
     "tests/crashHandlers.test.ts",
     "tests/createAgent.test.ts",
     "tests/createAgentFleet.test.ts",
+    "tests/dailyReplyLimit.test.ts",
     "tests/dbDegradation.test.ts",
     "tests/dbPoolTimeouts.test.ts",
     "tests/discordLink.test.ts",

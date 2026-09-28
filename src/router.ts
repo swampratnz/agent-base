@@ -69,6 +69,7 @@ import type {
 import { shouldNotifyRateLimited } from './rateLimitNotice.js';
 import { shouldNotifyPaused } from './pauseNotice.js';
 import { shouldNotifyBudgetCheckFailed } from './budgetCheckFailureNotice.js';
+import { overDailyReplyLimit, resolveDailyReplyLimit } from './dailyReplyLimit.js';
 import { makeAlertSlotReserver } from './notifications.js';
 import { appendWaitClause, staticGatedNotice, waitDaysSince, type buildGatedNotice } from './gatedNotice.js';
 
@@ -411,12 +412,9 @@ export class Router {
 
   private readonly RATE_LIMIT = 8; // messages
   private readonly RATE_WINDOW_MS = 60_000; // per minute
-  /** userKey -> when they were last told they hit the budget (rolling 24h, matching the budget window). */
-  private readonly budgetNotified = new Map<string, number>();
   /**
    * userKey -> when they were last warned they're approaching the daily
-   * budget (issue #511) — the pre-cutoff sibling of `budgetNotified` above,
-   * same key shape and same rolling-24h window, so a caller sitting inside
+   * budget (issue #511), keyed by platform and user, over a rolling 24h, so a caller sitting inside
    * the warning threshold for several messages in a row is warned once, not
    * on every message. Only written when DAILY_REPLY_BUDGET_WARN_ENABLED is
    * on (see `respond()`).
@@ -725,9 +723,6 @@ export class Router {
     const autoAnswerWindowMs = 60 * 60 * 1000;
     for (const [key, hits] of this.autoAnswerHits) {
       if (hits.every((t) => now - t >= autoAnswerWindowMs)) this.autoAnswerHits.delete(key);
-    }
-    for (const [key, at] of this.budgetNotified) {
-      if (now - at > 24 * 3_600_000) this.budgetNotified.delete(key);
     }
     for (const [key, at] of this.budgetWarned) {
       if (now - at > 24 * 3_600_000) this.budgetWarned.delete(key);
@@ -1587,14 +1582,17 @@ export class Router {
   private async dailyBudgetStep(ctx: PreTurnContext): Promise<InterceptOutcome> {
     const { msg, adapter } = ctx;
     const role = ctx.state.role!;
-    const userKey = ctx.state.userKey!;
     // Daily reply budget (super admins exempt). `replyBudget` is hoisted out
     // of this block (issue #511) so the already-fetched `used`/`limit` pair
     // can be threaded into `respond()` below for the approaching-budget
     // warning, instead of being discarded once the `used < limit` check
     // passes — no new DB query, reusing the exact read this block already
-    // makes.
-    const limit = config.behaviour.dailyReplyLimitPerUser;
+    // makes. The ceiling is the module's when it names one for this caller
+    // (dailyReplyLimit.ts), else the deployment's.
+    const limit = resolveDailyReplyLimit(
+      { platform: msg.platform, userId: msg.userId, role },
+      config.behaviour.dailyReplyLimitPerUser,
+    );
     let replyBudget: { used: number; limit: number } | undefined;
     if (limit > 0 && role !== 'super_admin') {
       const used = await this.countReplies(msg.platform, msg.userId).catch((err) => {
@@ -1611,25 +1609,22 @@ export class Router {
         }
         return 0;
       });
-      if (used >= limit) {
-        // Notify at most once per rolling 24h — same window as the budget itself.
-        const lastNotified = this.budgetNotified.get(userKey) ?? 0;
-        if (Date.now() - lastNotified > 24 * 3_600_000) {
-          this.budgetNotified.set(userKey, Date.now());
-          // Lookup sits inside the debounce guard (issue #300) — the daily
-          // budget path exists to shed load, so it must not add a
-          // per-message DB read to every over-budget message.
-          const lang = await this.getLangPref(msg.platform, msg.userId).catch(() => 'auto' as const);
-          // Same lazy style lookup as the pause/rate-limit notices above.
-          const style = isRegisteredLanguage(lang)
-            ? undefined
-            : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
-          await this.send(
-            adapter,
-            msg.conversationId,
-            notice('dailyBudgetNotice', { language: lang, style }),
-          ).catch(() => {});
-        }
+      if (overDailyReplyLimit(used, limit, role)) {
+        // Every message over the ceiling is answered with the notice. It used
+        // to be said once a day and then nothing: on the web a person who
+        // sends a message waits for an answer, and silence reads as a broken
+        // app. The notice is a fixed sentence, costs no model call, and the
+        // rate-limit step before this one already sheds a flood.
+        const lang = await this.getLangPref(msg.platform, msg.userId).catch(() => 'auto' as const);
+        // Same lazy style lookup as the pause/rate-limit notices above.
+        const style = isRegisteredLanguage(lang)
+          ? undefined
+          : await this.getRespStyle(msg.platform, msg.userId).catch(() => 'standard' as const);
+        await this.send(
+          adapter,
+          msg.conversationId,
+          notice('dailyBudgetNotice', { language: lang, style }),
+        ).catch(() => {});
         return 'handled';
       }
       replyBudget = { used, limit };
