@@ -110,7 +110,11 @@ export interface NoticeIdMap {
   confirmDonePrefix: string;
   /** Translated shell for a `Failed: ` confirm outcome. */
   confirmFailedPrefix: string;
-  /** Notice sent when the shared daily LLM spend budget is exhausted. */
+  /**
+   * Notice sent to a person who has had their daily replies
+   * (`DAILY_REPLY_LIMIT_PER_USER`, or the module's `dailyReplyLimit`): once a
+   * day, or for every message when the module asks.
+   */
   dailyBudgetNotice: string;
   /** Trailer warning the caller how many replies they have left today. */
   dailyReplyBudgetWarning: (remaining: number) => string;

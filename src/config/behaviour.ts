@@ -20,7 +20,9 @@ export const behaviourSlice = {
   // Default 0 = no floor (byte-identical to today's behaviour), matching this
   // repo's convention for opt-in knobs (e.g. KNOWLEDGE_CANDIDATE_STALE_DAYS).
   MEMORY_RELEVANCE_THRESHOLD: z.coerce.number().min(0).max(1).default(0),
-  // Max agent replies per user per rolling 24h (0 = unlimited).
+  // Max agent replies per user per rolling 24h (0 = unlimited). A module's
+  // `dailyReplyLimit` resolver may name another figure per caller, and ask
+  // for every message over it to be answered (src/dailyReplyLimit.ts).
   DAILY_REPLY_LIMIT_PER_USER: z.coerce.number().int().nonnegative().default(50),
   // Session hygiene: start a fresh Claude session past either cap.
   SESSION_MAX_TURNS: z.coerce.number().int().positive().default(30),

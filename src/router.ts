@@ -69,6 +69,7 @@ import type {
 import { shouldNotifyRateLimited } from './rateLimitNotice.js';
 import { shouldNotifyPaused } from './pauseNotice.js';
 import { shouldNotifyBudgetCheckFailed } from './budgetCheckFailureNotice.js';
+import { overDailyReplyLimit, resolveDailyReplyLimit } from './dailyReplyLimit.js';
 import { makeAlertSlotReserver } from './notifications.js';
 import { appendWaitClause, staticGatedNotice, waitDaysSince, type buildGatedNotice } from './gatedNotice.js';
 
@@ -1593,8 +1594,13 @@ export class Router {
     // can be threaded into `respond()` below for the approaching-budget
     // warning, instead of being discarded once the `used < limit` check
     // passes — no new DB query, reusing the exact read this block already
-    // makes.
-    const limit = config.behaviour.dailyReplyLimitPerUser;
+    // makes. The ceiling is the module's when it names one for this caller
+    // (dailyReplyLimit.ts), else the deployment's.
+    const ceiling = resolveDailyReplyLimit(
+      { platform: msg.platform, userId: msg.userId, role },
+      config.behaviour.dailyReplyLimitPerUser,
+    );
+    const limit = ceiling.limit;
     let replyBudget: { used: number; limit: number } | undefined;
     if (limit > 0 && role !== 'super_admin') {
       const used = await this.countReplies(msg.platform, msg.userId).catch((err) => {
@@ -1611,10 +1617,13 @@ export class Router {
         }
         return 0;
       });
-      if (used >= limit) {
-        // Notify at most once per rolling 24h — same window as the budget itself.
+      if (overDailyReplyLimit(used, limit, role)) {
+        // Notify at most once per rolling 24h — same window as the budget
+        // itself — unless the module asked for every message over the ceiling
+        // to be answered (`noticeEachMessage`): on the web a person who sends
+        // a message waits for an answer, and silence reads as a broken app.
         const lastNotified = this.budgetNotified.get(userKey) ?? 0;
-        if (Date.now() - lastNotified > 24 * 3_600_000) {
+        if (ceiling.noticeEachMessage || Date.now() - lastNotified > 24 * 3_600_000) {
           this.budgetNotified.set(userKey, Date.now());
           // Lookup sits inside the debounce guard (issue #300) — the daily
           // budget path exists to shed load, so it must not add a

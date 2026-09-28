@@ -104,10 +104,11 @@ surface — completeness is required of the composition, not of any one module.
 | `admitGuild?` | Discord guild admitter (once per process) | no; absent, the adapter hears `DISCORD_GUILD_ID` alone |
 | `turnRuntime?` | turn runtime resolver (once per process) | no; absent, the CLI is a local child and the full built-in surface is an armed super admin's only |
 | `usageLimitNotice?` | usage limit notice resolver (once per process) | no; absent, a usage-limit failure is answered with the `usageLimitReply` notice |
+| `dailyReplyLimit?` | daily reply limit resolver (once per process) | no; absent, every caller has `DAILY_REPLY_LIMIT_PER_USER`, told once a day |
 | `turnStateFinalizers?` · `policyKeys?` · `provenance?` · `purgeContributors?` · `preTurnIntercepts?` · `postTurnHandlers?` · `runtimeSecrets?` · `migrations?` | additive | no |
 
 The eight required singleton rows plus `personas` are the nine `assertRegistrationsComplete()`
-probes (`resolveAuthority`, `resolveInteractionOrg`, `admitGuild`, `turnRuntime` and `usageLimitNotice` are singletons too — two claimants are refused — but optional); a composition missing any of them is refused with every gap named at
+probes (`resolveAuthority`, `resolveInteractionOrg`, `admitGuild`, `turnRuntime`, `usageLimitNotice` and `dailyReplyLimit` are singletons too — two claimants are refused — but optional); a composition missing any of them is refused with every gap named at
 once. The additive rows are appended, and base owns the iteration order inside
 each (see the per-registry sections below).
 
@@ -722,6 +723,36 @@ resets. Its sentence is said in place of the catalogue's `usageLimitReply`.
 - The sentence is the module's, in whatever language it chose: the catalogue's
   language and style variants are not applied to it. It leaves through the
   adapter's outbound filter like any reply.
+
+### Daily reply limit
+
+**live** (0.8.8). `src/dailyReplyLimit.ts`, registered through the manifest's
+`dailyReplyLimit` field.
+
+```ts
+export type DailyReplyLimitResolver = (request: {
+  platform: Platform;
+  userId: string;
+  role: Tier;
+}) => { limit: number; noticeEachMessage: boolean } | undefined;
+```
+
+The base answers one person at most `DAILY_REPLY_LIMIT_PER_USER` times in a
+rolling 24 hours (default 50; a super admin is never counted), and tells them
+once in that window with the `dailyBudgetNotice` notice; later messages get
+nothing. A module that bounds spend another way, such as a weekly model budget
+per organisation, can use the count as an abuse ceiling only, set higher, per
+platform or per caller, and can ask for every message over it to be answered.
+
+- **It moves the ceiling and never removes it.** A `limit` that is a whole
+  number from 1 to `DAILY_REPLY_LIMIT_MAX` (100,000) is taken. `undefined`, a
+  throw, zero, a fraction or anything else gets `DAILY_REPLY_LIMIT_PER_USER`
+  with the once-a-day notice.
+- **`noticeEachMessage: true` answers every message over the ceiling** with
+  the notice, for a surface where a person waits for an answer (the web) and
+  silence reads as a broken app. The notice is a fixed sentence and costs no
+  model call; the rate-limit step before it already sheds a flood. Anything
+  but `true` keeps the once-a-day notice.
 
 ---
 

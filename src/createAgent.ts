@@ -86,6 +86,7 @@ import type { AuthorityResolver } from './auth/roles.js';
 import { registerAuthorityResolver } from './auth/roles.js';
 import { registerTurnRuntimeResolver, type TurnRuntimeResolver } from './agent/turnRuntime.js';
 import { registerUsageLimitNoticeResolver, type UsageLimitNoticeResolver } from './agent/usageLimitNotice.js';
+import { registerDailyReplyLimitResolver, type DailyReplyLimitResolver } from './dailyReplyLimit.js';
 import type { InteractionOrgResolver } from './storage/repository/interactions.js';
 import { registerInteractionOrgResolver } from './storage/repository/interactions.js';
 import { registerGuildAdmitter, type GuildAdmitter } from './platforms/discord/guildAdmission.js';
@@ -192,6 +193,16 @@ export interface AgentModule<Ctx = unknown> {
    * agent/usageLimitNotice.ts.
    */
   usageLimitNotice?: UsageLimitNoticeResolver;
+  /**
+   * OPTIONAL: the daily reply ceiling for one caller, for a module that bounds
+   * spend another way and wants the per-person count as an abuse ceiling
+   * only: `{limit, noticeEachMessage}`, a whole number from 1 to
+   * `DAILY_REPLY_LIMIT_MAX` and whether every message over it is answered, or
+   * `undefined` for `DAILY_REPLY_LIMIT_PER_USER` told once a day. It can move
+   * the ceiling and never remove it. See `DailyReplyLimitResolver` in
+   * dailyReplyLimit.ts.
+   */
+  dailyReplyLimit?: DailyReplyLimitResolver;
 
   // --- additive registries -------------------------------------------------
   personas?: readonly { persona: Persona; isDefault?: boolean }[];
@@ -384,6 +395,7 @@ const SINGLETONS: readonly { registry: string; field: keyof AgentModule }[] = Ob
   { registry: 'guild admitter', field: 'admitGuild' },
   { registry: 'turn runtime resolver', field: 'turnRuntime' },
   { registry: 'usage limit notice resolver', field: 'usageLimitNotice' },
+  { registry: 'daily reply limit resolver', field: 'dailyReplyLimit' },
 ]);
 
 /**
@@ -457,6 +469,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<Agent> {
     if (mod.admitGuild) registerGuildAdmitter(mod.admitGuild);
     if (mod.turnRuntime) registerTurnRuntimeResolver(mod.turnRuntime);
     if (mod.usageLimitNotice) registerUsageLimitNoticeResolver(mod.usageLimitNotice);
+    if (mod.dailyReplyLimit) registerDailyReplyLimitResolver(mod.dailyReplyLimit);
   }
 
   // 4. additive registries. Base owns ITERATION order inside each of these

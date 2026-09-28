@@ -4,6 +4,7 @@
   "builtinToolArming.test.ts": 6,
   "configSlices.test.ts": 2,
   "createAgent.test.ts": 2,
+  "dailyReplyLimit.test.ts": 3,
   "failClosedMessages.test.ts": 1,
   "gatedNotice.test.ts": 6,
   "guildAdmission.test.ts": 5,
