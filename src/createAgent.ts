@@ -196,9 +196,11 @@ export interface AgentModule<Ctx = unknown> {
   /**
    * OPTIONAL: the daily reply ceiling for one caller, for a module that bounds
    * spend another way and wants the per-person count as an abuse ceiling
-   * only. Answers a whole number from 1 to `DAILY_REPLY_LIMIT_MAX`, or
-   * `undefined` for `DAILY_REPLY_LIMIT_PER_USER`. It can move the ceiling and
-   * never remove it. See `DailyReplyLimitResolver` in dailyReplyLimit.ts.
+   * only: `{limit, noticeEachMessage}`, a whole number from 1 to
+   * `DAILY_REPLY_LIMIT_MAX` and whether every message over it is answered, or
+   * `undefined` for `DAILY_REPLY_LIMIT_PER_USER` told once a day. It can move
+   * the ceiling and never remove it. See `DailyReplyLimitResolver` in
+   * dailyReplyLimit.ts.
    */
   dailyReplyLimit?: DailyReplyLimitResolver;
 

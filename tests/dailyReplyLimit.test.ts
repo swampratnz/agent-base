@@ -27,34 +27,49 @@ const web = { platform: 'web' as const, userId: 'u1', role: 'member' as Tier };
 
 beforeEach(() => resetDailyReplyLimitResolverForTest());
 
-test('with no resolver, or one that answers undefined, the deployment figure stands', () => {
-  assert.equal(resolveDailyReplyLimit(web, 50), 50);
+const deployment = { limit: 50, noticeEachMessage: false };
+const webCeiling = { limit: 500, noticeEachMessage: true };
+
+test('with no resolver, or one that answers undefined, the deployment figure stands, told once a day', () => {
+  assert.deepEqual(resolveDailyReplyLimit(web, 50), deployment);
   registerDailyReplyLimitResolver(() => undefined);
-  assert.equal(resolveDailyReplyLimit(web, 50), 50);
+  assert.deepEqual(resolveDailyReplyLimit(web, 50), deployment);
 });
 
 test('the resolver is registered once per process', () => {
-  registerDailyReplyLimitResolver(() => 500);
-  assert.throws(() => registerDailyReplyLimitResolver(() => 500), /already registered/);
+  registerDailyReplyLimitResolver(() => webCeiling);
+  assert.throws(() => registerDailyReplyLimitResolver(() => webCeiling), /already registered/);
 });
 
-test("the module's figure is the ceiling for the callers it names", () => {
-  registerDailyReplyLimitResolver((r) => (r.platform === 'web' ? 500 : undefined));
-  assert.equal(resolveDailyReplyLimit(web, 50), 500);
-  assert.equal(resolveDailyReplyLimit({ ...web, platform: 'discord' }, 50), 50);
+test("the module's ceiling is the one for the callers it names", () => {
+  registerDailyReplyLimitResolver((r) => (r.platform === 'web' ? webCeiling : undefined));
+  assert.deepEqual(resolveDailyReplyLimit(web, 50), webCeiling);
+  assert.deepEqual(resolveDailyReplyLimit({ ...web, platform: 'discord' }, 50), deployment);
+  resetDailyReplyLimitResolverForTest();
+  registerDailyReplyLimitResolver(() => ({ limit: 500, noticeEachMessage: 'yes' as unknown as boolean }));
+  assert.deepEqual(
+    resolveDailyReplyLimit(web, 50),
+    { limit: 500, noticeEachMessage: false },
+    'only true asks for every message',
+  );
 });
 
 test('SECURITY: a resolver cannot remove the ceiling — zero, a fraction, a huge figure, a string or a throw all get the deployment figure', () => {
   for (const bad of [0, -1, 2.5, 100_001, Number.POSITIVE_INFINITY, Number.NaN, '500', null]) {
     resetDailyReplyLimitResolverForTest();
-    registerDailyReplyLimitResolver(() => bad as unknown as number);
-    assert.equal(resolveDailyReplyLimit(web, 50), 50, `answer ${String(bad)}`);
+    registerDailyReplyLimitResolver(() => ({ limit: bad as unknown as number, noticeEachMessage: true }));
+    assert.deepEqual(resolveDailyReplyLimit(web, 50), deployment, `limit ${String(bad)}`);
+  }
+  for (const bad of [null, 500, 'x']) {
+    resetDailyReplyLimitResolverForTest();
+    registerDailyReplyLimitResolver(() => bad as unknown as { limit: number; noticeEachMessage: boolean });
+    assert.deepEqual(resolveDailyReplyLimit(web, 50), deployment, `answer ${String(bad)}`);
   }
   resetDailyReplyLimitResolverForTest();
   registerDailyReplyLimitResolver(() => {
     throw new Error('policy table unreachable');
   });
-  assert.equal(resolveDailyReplyLimit(web, 50), 50);
+  assert.deepEqual(resolveDailyReplyLimit(web, 50), deployment);
 });
 
 test('over the ceiling is at it or past it; a super admin and a ceiling of 0 are never over', () => {
@@ -65,12 +80,16 @@ test('over the ceiling is at it or past it; a super admin and a ceiling of 0 are
   assert.equal(overDailyReplyLimit(10_000, 0, 'member'), false);
 });
 
+/** The same stand-in router across messages, so its once-a-day memory carries from one to the next. */
+const notified = new Map<string, number>();
+
 /** The router's daily-budget step, run against a stand-in router whose reply count is `used`. */
 async function runStep(
   used: number,
 ): Promise<{ outcome: string; sent: string[]; state: Record<string, unknown> }> {
   const sent: string[] = [];
   const self = {
+    budgetNotified: notified,
     countReplies: async () => used,
     getLangPref: async () => 'auto',
     getRespStyle: async () => 'standard',
@@ -87,25 +106,29 @@ async function runStep(
   return { outcome, sent, state };
 }
 
-test('SECURITY: the ceiling holds, and every message over it is told so — never silence', async () => {
+test('SECURITY: the deployment ceiling holds, and is told once a day as before', async () => {
+  notified.clear();
   const limit = config.behaviour.dailyReplyLimitPerUser;
   assert.ok(limit > 0, 'the test deployment has a ceiling');
   const under = await runStep(limit - 1);
   assert.equal(under.outcome, 'continue');
   assert.deepEqual(under.sent, []);
   assert.deepEqual(under.state.replyBudget, { used: limit - 1, limit });
-  // Three messages in a row at the ceiling: each is refused, and each is answered.
+  const first = await runStep(limit);
+  assert.equal(first.outcome, 'handled', 'no turn runs past the ceiling');
+  assert.deepEqual(first.sent, ['test:dailyBudgetNotice']);
+  const second = await runStep(limit + 1);
+  assert.equal(second.outcome, 'handled');
+  assert.deepEqual(second.sent, [], 'a chat community is told once in the window');
+});
+
+test("SECURITY: a module's higher ceiling holds, and every message over it is told so — never silence", async () => {
+  notified.clear();
+  registerDailyReplyLimitResolver((r) => (r.platform === 'web' ? webCeiling : undefined));
+  assert.equal((await runStep(499)).outcome, 'continue');
   for (let i = 0; i < 3; i += 1) {
-    const over = await runStep(limit + i);
+    const over = await runStep(500 + i);
     assert.equal(over.outcome, 'handled', 'no turn runs past the ceiling');
     assert.deepEqual(over.sent, ['test:dailyBudgetNotice'], `message ${i + 1} over the ceiling is told`);
   }
-});
-
-test("SECURITY: a module's higher ceiling is a ceiling too", async () => {
-  registerDailyReplyLimitResolver((r) => (r.platform === 'web' ? 500 : undefined));
-  assert.equal((await runStep(499)).outcome, 'continue');
-  const at = await runStep(500);
-  assert.equal(at.outcome, 'handled');
-  assert.deepEqual(at.sent, ['test:dailyBudgetNotice']);
 });
