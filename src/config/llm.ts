@@ -111,6 +111,21 @@ export const llmSlice = {
     .string()
     .optional()
     .transform((v) => v === 'true'),
+  // The deployment's ceilings for a background turn (agent-base 0.9.0,
+  // agent/backgroundTurns.ts). A module asks for its own limits per turn and
+  // the base clamps them to these, so a module can only lower them. Long work
+  // is the point of a background turn, so they are separate from the live
+  // turn's; each defaults to the live turn's value, so a deployment that sets
+  // nothing gets no longer turns than a live one:
+  //  - MAX_TURNS: unset = the live turn's tiered AGENT_MAX_TURNS /
+  //    AGENT_MAX_TURNS_MEMBER for the background turn's tier;
+  //  - TIMEOUT_MS: unset = AGENT_TURN_TIMEOUT_MS;
+  //  - MAX_COST_USD: unset = no deployment ceiling beyond the module's own
+  //    per-turn `maxCostUsd`, which is required, so every background turn
+  //    still has a cost ceiling (a live turn has none).
+  BACKGROUND_TURN_MAX_TURNS: z.coerce.number().int().positive().optional(),
+  BACKGROUND_TURN_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+  BACKGROUND_TURN_MAX_COST_USD: z.coerce.number().positive().optional(),
 };
 
 type LlmEnv = {

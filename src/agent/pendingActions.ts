@@ -1,4 +1,5 @@
 import type { Platform, Tier } from '../platforms/types.js';
+import { currentBackgroundTurnId } from './turnScope.js';
 
 /**
  * Confirm-before-destructive flow.
@@ -52,6 +53,18 @@ export function registerPendingAction(
   action: Omit<PendingAction, 'expiresAt'>,
   ttlMs?: number,
 ): number {
+  // SECURITY: a background turn has nobody present to answer a CONFIRM, and
+  // the slot is shared with the live conversation, so a pending action
+  // registered from one would sit waiting for (or replace) the person's own
+  // card. The base already replaces `requireConfirm` in a background turn's
+  // tool context; this is the backstop for a module that reaches this
+  // primitive another way (docs/SECURITY.md invariant 3).
+  const backgroundId = currentBackgroundTurnId();
+  if (backgroundId !== null) {
+    throw new Error(
+      `background turn ${backgroundId} tried to register a pending action — a background turn cannot ask for CONFIRM`,
+    );
+  }
   const ttl =
     ttlMs !== undefined && Number.isFinite(ttlMs) && ttlMs > 0
       ? Math.min(ttlMs, CONFIRM_MAX_TTL_MS)

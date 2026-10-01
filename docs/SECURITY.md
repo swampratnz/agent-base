@@ -159,6 +159,16 @@ stay tier-derived. A deployment that grants the shell without the arming gate
 must be running the CLI somewhere that is itself the containment; the base
 cannot check that, and the module owns it.
 
+**A background turn is never armed** (0.9.0, invariant 13). `buildQueryOptions`
+computes `armed` false for it whatever arming its requester holds in the
+conversation, its system prompt renders no `shell-arming` slot, the mutating
+`PreToolUse` gate denies unconditionally inside it, and the turn-runtime
+resolver is told `armed: false, kind: 'background'`. An arming is a "this
+person is here, right now" grant; a background turn has nobody present, so a
+five-minute window cannot be stretched into a long unattended shell. A module's
+turn runtime may still grant a background turn a sandboxed shell without the
+arming gate, exactly as above; the base cannot check that sandbox either.
+
 A module's usage limit notice (MODULE-API.md § Usage limit notice) replaces
 one fixed notice with the module's sentence. It does not open the invariant
 that a failed turn never echoes upstream text: the resolver is handed the
@@ -234,6 +244,18 @@ exactly one place" is one place *per consumer*, enforced by that consumer's
 own suite, not by this package. Until base ships the helper, a module that
 implements it wrongly weakens its own pending notices; the intercept, the
 tier re-resolution and the router-rendered notice above remain base's.
+
+**A background turn cannot register a pending action** (0.9.0, invariant 13).
+Nobody is present to answer one, and the slot is shared per conversation and
+person, so a background turn's card would sit unanswerable or replace the
+person's own. Two layers, both base-owned: the base replaces the module's
+`requireConfirm` on a background turn's tool context with its own, which hands
+the request to the module's optional `backgroundTurns.onConfirmRequest` (an
+unattended approval path) or refuses; and `registerPendingAction` itself
+throws when called from inside a background turn's tool handler, which covers
+a module helper that kept its own `requireConfirm` closure or imports the
+primitive directly. A background turn whose context the base cannot give the
+replacement (a frozen object) does not run.
 
 ### 4. Outbound filtering
 
@@ -463,6 +485,46 @@ can aim; a signal that can only degrade or veto fails in the safe direction.
 When a future contract lets a module register a scoring hook, the mechanism
 that consumes it must clamp it to this shape — the same reasoning that keeps
 tier lists derived rather than supplied.
+
+### 13. Background turns run as the requester, bounded, and come back as data
+
+A module can start a second turn that runs on while the live conversation
+carries on (MODULE-API.md § Background turns,
+[design](design/background-subagents.md)). The base owns every enforcement
+point of it:
+
+- **Authority.** The only door is `ToolContext.startBackgroundTurn` on a live
+  turn's context, so the requester is that turn's caller by construction. The
+  tier is re-resolved through `resolveRole` at start and clamped to the lowest
+  of that, the live turn's tier and any narrower tier the module asks for; a
+  guest is refused. The tool surface is `turnModuleToolIds` of that tier, the
+  same derivation as a live turn's.
+- **Never armed, never CONFIRM** — see invariants 1 and 3.
+- **Own session.** It never reads or writes the conversation's stored session,
+  so it cannot race or poison the live conversation's resume.
+- **Bounded.** A required cost ceiling passed to the SDK as `maxBudgetUsd`, a
+  `maxTurns` and a wall-clock timeout, each clamped to the deployment's
+  `BACKGROUND_TURN_*` maxima, which a module can only lower. A process cap and
+  per-key caps refuse a start rather than queue it. The module's `admit` hook
+  refuses on its own budget rules before anything is spent; a throw refuses.
+- **Stoppable.** A handle, `stopBackgroundTurns`, the pause flag (refuses new
+  starts and stops running turns at their next tool call, checked both in a
+  `PreToolUse` hook and in the base's wrapper around every module tool handler,
+  because a sandboxed CLI is not trusted to run hooks) and `Router.drain`.
+  After a stop no model call starts and the CLI is aborted within
+  `STOP_GRACE_MS`.
+- **Output is data.** The result reaches the module outbound-filtered (secret
+  redaction) and, separately, inside a closed `<background-result>` fence with
+  `<` and `>` stripped inside it. The base never feeds it into another turn.
+- **Depth one.** A background turn's context has no door, and a start from
+  inside a background turn's tool handler is refused `'nested'`.
+- **Audited** in the log: start (requester, tier, ceilings), stop (reason) and
+  end (status, cost).
+
+What stays the module's: a background turn's tool calls can write the same
+module storage as a concurrent live turn, so version checks on shared writes
+are the module's, as for any concurrent turns; persistence across a restart
+(the registry is in-process); and attributing the reported cost to a person.
 
 ---
 

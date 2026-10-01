@@ -105,10 +105,11 @@ surface — completeness is required of the composition, not of any one module.
 | `turnRuntime?` | turn runtime resolver (once per process) | no; absent, the CLI is a local child and the full built-in surface is an armed super admin's only |
 | `usageLimitNotice?` | usage limit notice resolver (once per process) | no; absent, a usage-limit failure is answered with the `usageLimitReply` notice |
 | `dailyReplyLimit?` | daily reply limit resolver (once per process) | no; absent, every caller has `DAILY_REPLY_LIMIT_PER_USER`, told once a day |
+| `backgroundTurns?` | background turns policy (once per process) | no; absent, every `startBackgroundTurn` is refused |
 | `turnStateFinalizers?` · `policyKeys?` · `provenance?` · `purgeContributors?` · `preTurnIntercepts?` · `postTurnHandlers?` · `runtimeSecrets?` · `migrations?` | additive | no |
 
 The eight required singleton rows plus `personas` are the nine `assertRegistrationsComplete()`
-probes (`resolveAuthority`, `resolveInteractionOrg`, `admitGuild`, `turnRuntime`, `usageLimitNotice` and `dailyReplyLimit` are singletons too — two claimants are refused — but optional); a composition missing any of them is refused with every gap named at
+probes (`resolveAuthority`, `resolveInteractionOrg`, `admitGuild`, `turnRuntime`, `usageLimitNotice`, `dailyReplyLimit` and `backgroundTurns` are singletons too — two claimants are refused — but optional); a composition missing any of them is refused with every gap named at
 once. The additive rows are appended, and base owns the iteration order inside
 each (see the per-registry sections below).
 
@@ -250,8 +251,19 @@ export interface ToolContext {
     run: () => Promise<string>,
   ) => ToolResult;
   resolveMemberTarget: (rawUserId: string, platformArg?: Platform) => Promise<{ platform: Platform; userId: string }>;
+  // Set by the BASE on the context makeContext returned (0.9.0); see § Background turns.
+  turnKind?: 'live' | 'background';
+  startBackgroundTurn?: (spec: BackgroundTurnSpec) => Promise<BackgroundStart>;
 }
 ```
+
+The last two fields are the base's, not the factory's: `buildToolServer` puts
+them on whatever `makeContext` returned, so a factory written before 0.9.0
+typechecks and behaves unchanged. `makeContext` also receives a sixth,
+optional argument, the turn's `TurnInfo` (`{ kind: 'live' }` or
+`{ kind: 'background', id, tag }`), for a module that keys per-turn data by
+conversation and so needs to tell a background turn from the live one on the
+same conversation.
 
 `audited` pairs the audit row with the super-admin echo, and `requireConfirm`
 queues a pending action rather than executing one. Base owns the *type* above
@@ -656,8 +668,15 @@ export interface TurnRuntime {
   spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess; // G2
   sessionStore?: SessionStore;                                 // G2 (SDK alpha)
 }
-export type TurnRuntimeResolver = (request: { caller: CallerContext; armed: boolean }) =>
+export type TurnRuntimeResolver = (request: TurnRuntimeRequest) =>
   TurnRuntime | undefined | Promise<TurnRuntime | undefined>;
+export interface TurnRuntimeRequest {
+  caller: CallerContext;
+  armed: boolean;            // always false for a background turn
+  kind?: 'live' | 'background'; // 0.9.0; the base always sets it, absent = live
+  id?: string;               // a background turn's id
+  tag?: unknown;             // a background turn's module tag
+}
 ```
 
 Asked once per turn, before the tool server is built. It says where the
@@ -753,6 +772,122 @@ platform or per caller, and can ask for every message over it to be answered.
   silence reads as a broken app. The notice is a fixed sentence and costs no
   model call; the rate-limit step before it already sheds a flood. Anything
   but `true` keeps the once-a-day notice.
+
+### Background turns
+
+**live** (0.9.0). `src/agent/backgroundTurns.ts`, opted into through the
+manifest's `backgroundTurns` field, started through
+`ToolContext.startBackgroundTurn`. Design and security argument:
+[design/background-subagents.md](design/background-subagents.md); invariant:
+[SECURITY.md](SECURITY.md) invariant 13.
+
+A live turn's tool decides a request is long work, starts a second turn for
+the same person, and answers straight away. The background turn runs on while
+the conversation carries on; its result reaches the module's `onDone`, and the
+module decides where it goes.
+
+```ts
+// On the manifest:
+backgroundTurns?: {
+  maxConcurrent: number;                        // whole process; 0 refuses all
+  perKey?: (key: string) => number | undefined; // cap per limit key; undefined = none
+  admit?: (spec: Readonly<BackgroundTurnSpec>, tier: Tier) =>
+    Promise<{ ok: true } | { ok: false; detail: string }>;
+  onConfirmRequest?: (request: BackgroundConfirmRequest) => string;
+};
+
+// From a live turn's tool handler:
+const start = await ctx.startBackgroundTurn?.({
+  prompt: 'Research … and write it up.',        // treated like the person's message
+  budget: { maxCostUsd: 0.5, maxTurns: 20, timeoutMs: 15 * 60_000 },
+  tier: 'member',                               // optional, narrower only
+  limitKeys: ['org:7'],                         // counted against perKey
+  tag: { taskId },                              // yours; never shown to the model
+  onDone: async (result) => { /* post result.text, record result.costUsd */ },
+});
+// start: { ok: true, handle: { id, stop(reason), done } }
+//      | { ok: false, reason: 'paused' | 'cap' | 'nested' | 'refused' | 'tier', detail? }
+
+// Operator functions (also on the barrel):
+listBackgroundTurns(filter?: { platform?; userId?; limitKey? }): BackgroundTurnInfo[];
+stopBackgroundTurns(filter: { platform?; userId?; limitKey? } | { all: true }, reason: string): number;
+```
+
+What the base guarantees, in the order a start is checked:
+
+1. **Depth one.** Only a live turn's context has `startBackgroundTurn`, and
+   only while that turn runs; after it ends the function refuses
+   (`'refused'`). A background turn's context has none, and a start from
+   inside a background turn's tool handler is refused `'nested'`.
+2. **No manifest field, no start** (`'refused'`). A malformed spec (empty
+   prompt, `maxCostUsd` not a positive number, …) is refused, never repaired.
+3. **Pause** refuses (`'paused'`), and a pause read that fails refuses too.
+4. **Tier.** The requester is the live turn's caller; a module cannot name
+   anyone else. Their tier is re-resolved with `resolveRole` (so your
+   `resolveAuthority` applies) and the turn runs at the lowest of that, the
+   live turn's tier and `spec.tier`. A guest is refused `'tier'`.
+5. **Caps** are checked and the slot reserved in one step, so two starts that
+   race for the last slot cannot both pass. A full cap refuses (`'cap'`); it
+   never queues. A throwing `perKey` refuses.
+6. **`admit`** is asked with the spec and the clamped tier, before anything is
+   spent. `{ ok: false }` or a throw refuses (`'refused'`, with your detail).
+7. **Run**, not awaited. The handle's `stop` is the turn's own: ending or
+   stopping the live turn does not stop it. Call both if one Stop should end
+   both.
+
+How it runs: the same `execTurn` as a live turn, with these differences.
+
+- **No session.** It never reads or writes the conversation's stored session.
+  It starts fresh with the conversation tail and recall quoted in, like a
+  fresh live turn. The SDK still writes its transcript wherever your G2
+  runtime says.
+- **Tools from the clamped tier**, by the same `turnModuleToolIds` as a live
+  turn's, and **never armed**: no armed built-ins, no `shell-arming` prompt
+  slot, the mutating gate denies.
+- **`TurnRuntimeRequest.kind` is `'background'`**, with `id` and `tag`, so your
+  resolver can sandbox it, refuse it built-ins or find your record of it.
+  `makeContext` is told the same.
+- **CONFIRM.** `ctx.requireConfirm` in a background turn is the base's, not
+  yours: it calls `onConfirmRequest` (send the action to your unattended
+  approval path and return the sentence the model gets), or refuses when you
+  set none. `registerPendingAction` throws inside a background turn's tool
+  handler, so a helper that bypasses the context is refused too.
+- **Ceilings.** `maxCostUsd` goes to the SDK as `maxBudgetUsd`. `maxTurns` and
+  `timeoutMs` default to, and are clamped to, the deployment's
+  `BACKGROUND_TURN_MAX_TURNS` (default: the live turn's tiered
+  `AGENT_MAX_TURNS`/`AGENT_MAX_TURNS_MEMBER`) and `BACKGROUND_TURN_TIMEOUT_MS`
+  (default: `AGENT_TURN_TIMEOUT_MS`). `maxCostUsd` is clamped to
+  `BACKGROUND_TURN_MAX_COST_USD` when that is set.
+- **Stop.** `handle.stop`, `stopBackgroundTurns` and `Router.drain` (which
+  stops them before adapters close and waits for each `onDone`, inside its
+  timeout) interrupt the CLI and abort it after `STOP_GRACE_MS`; no retry
+  follows. The pause flag stops a running turn at its next tool call.
+
+The result, passed to `onDone` once (a throw there is logged and swallowed)
+and on `handle.done`:
+
+```ts
+interface BackgroundTurnResult {
+  id: string;
+  status: 'done' | 'stopped' | 'budget' | 'max_turns' | 'timeout' | 'failed';
+  text: string;      // outbound-filtered, safe to send; empty unless 'done'
+  fenced: string;    // the same text in a closed <background-result> block, < and > stripped inside
+  costUsd: number;   // including spend before a stop or a ceiling
+  modelUsage?: Record<string, number>;
+  startedAt: Date; endedAt: Date;
+  stopReason?: string; // 'paused', 'shutdown', or the reason given to stop
+  tag: unknown;
+}
+```
+
+The base never feeds a result into another turn. To have the agent talk about
+it, start a new turn and include `fenced` as data.
+
+What stays the module's: what a task is and how it is shown; persistence
+across a restart (the registry is in-process, so keep your own durable rows and
+mark orphans on boot); attributing `costUsd` to a person the way you record a
+live turn's cost; your own budget rules, in `admit`; version checks on module
+storage a background and a live turn may both write.
 
 ---
 

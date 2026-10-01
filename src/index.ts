@@ -52,6 +52,28 @@ export type { CallerContext } from './auth/rbac.js';
 // context, which the base never looks inside.
 export { defineTool, type ToolContext, type ToolDef, type ToolResult } from './agent/tools/types.js';
 export type { ToolServerParts } from './agent/toolServer.js';
+
+// --- Background turns ----------------------------------------------------------
+//
+// A live turn's tool starts one through `ToolContext.startBackgroundTurn`; the
+// module opts in with the `backgroundTurns` manifest field. The operator
+// functions stop them; shutdown (`Router.drain`) stops them too.
+export {
+  listBackgroundTurns,
+  stopBackgroundTurns,
+  type BackgroundConfirmRequest,
+  type BackgroundRefusal,
+  type BackgroundStart,
+  type BackgroundTurnBudget,
+  type BackgroundTurnFilter,
+  type BackgroundTurnHandle,
+  type BackgroundTurnInfo,
+  type BackgroundTurnResult,
+  type BackgroundTurnSpec,
+  type BackgroundTurnStatus,
+  type BackgroundTurnsPolicy,
+} from './agent/backgroundTurns.js';
+export type { TurnInfo, TurnKind } from './agent/turnScope.js';
 export type { ToolTierRegistration } from './auth/rbac.js';
 export type { FlaggedToolPredicate } from './agent/featureFlags.js';
 

@@ -1,6 +1,7 @@
 import type { SessionStore, SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import type { CallerContext } from '../auth/rbac.js';
 import { ALL_BUILTIN_TOOLS } from './builtinTools.js';
+import type { TurnKind } from './turnScope.js';
 
 /**
  * Where and with what a turn's Claude Code CLI runs, decided by the module per
@@ -41,8 +42,21 @@ export interface TurnRuntime {
 export interface TurnRuntimeRequest {
   /** The caller, at the tier the turn runs at. */
   readonly caller: CallerContext;
-  /** Would the base itself give this turn the full built-in surface (a super admin with a live arming here)? */
+  /** Would the base itself give this turn the full built-in surface (a super admin with a live arming here)? Always false for a background turn. */
   readonly armed: boolean;
+  /**
+   * `'background'` for a turn a module started with `startBackgroundTurn`,
+   * `'live'` for every other (agent-base 0.9.0). The base always sets it; it
+   * is optional only so a resolver test written before 0.9.0, which builds a
+   * request by hand, still typechecks. Treat an absent value as `'live'`.
+   * A resolver may use it to send a background turn to a sandbox or refuse it
+   * built-ins; it still cannot widen the module tools (SECURITY.md invariant 1).
+   */
+  readonly kind?: TurnKind;
+  /** A background turn's id, as on its handle and result. Absent for a live turn. */
+  readonly id?: string;
+  /** A background turn's `tag`, as the module passed it. Absent for a live turn. */
+  readonly tag?: unknown;
 }
 
 /**

@@ -24,6 +24,7 @@ import type { IncomingMessage, Platform, PlatformAdapter } from './platforms/typ
 import { WindowClosedError } from './platforms/types.js';
 import { sanitizeName } from './util/sanitizeName.js';
 import { internalErrorReply, type runAgentTurn, type AgentReply } from './agent/core.js';
+import { drainBackgroundTurns } from './agent/backgroundTurns.js';
 import { notice, isRegisteredLanguage, isRegisteredStyle } from './strings/catalogue.js';
 import {
   armMutatingTools,
@@ -781,14 +782,18 @@ export class Router {
    */
   async drain(timeoutMs: number): Promise<void> {
     const inFlight = [...this.chains.values()];
-    if (inFlight.length === 0) return;
+    // Background turns (agent-base 0.9.0) are stopped, not waited out: each
+    // is interrupted now, and the drain waits for it to wind down and for
+    // its module's `onDone` to return, inside the same timeout.
+    const background = drainBackgroundTurns('shutdown');
+    if (inFlight.length === 0 && background === null) return;
 
     const timedOut = await Promise.race([
-      Promise.allSettled(inFlight).then(() => false),
+      Promise.allSettled([...inFlight, ...(background ? [background] : [])]).then(() => false),
       new Promise<boolean>((resolve) => setTimeout(() => resolve(true), timeoutMs).unref()),
     ]);
     logger.info(
-      { inFlight: inFlight.length, timedOut },
+      { inFlight: inFlight.length, background: background !== null, timedOut },
       timedOut
         ? 'Shutdown drain timed out with turns still in flight'
         : 'Shutdown drain: all in-flight turns settled',
