@@ -33,7 +33,7 @@ of enforcement points. Reach for anything below only when the thing that is
 actually wanted is a second **trust domain** or a second **deployment**, not a
 second capability.
 
-## 2. Sub-agents within one process — a future base seam
+## 2. Sub-agents within one process — built as background turns (0.9.0)
 
 A supervisor turn spawning a narrower specialist turn ("research this thread",
 "audit this ledger") and folding its result back in. The Claude Agent SDK
@@ -63,12 +63,35 @@ definitions as data** — a persona, prompt slot content, a named tool subset �
 and the **base owns the mechanism**: spawning, surface derivation,
 CONFIRM routing, output filtering, budget accounting.
 
-**Status: not planned, absent a consumer.** Neither community-agent nor the
-Phase 4 personal agent needs this; both fit in one turn engine. If a consumer
-arrives whose need survives the "is this actually a second module?" question
-above, this section becomes the seed of a `planned` entry in
-[MODULE-API.md](MODULE-API.md) — which, per the rule, will still export
-nothing until it runs.
+**Status: built (0.9.0), as background turns.** A consumer arrived whose need
+survived the "is this actually a second module?" question: an orchestrating
+agent whose live turn decides a request is long work, starts a second turn,
+and answers the person straight away. The design is
+[design/background-subagents.md](design/background-subagents.md); the
+contract is [MODULE-API.md § Background turns](MODULE-API.md#background-turns),
+**live**; the invariant is [SECURITY.md](SECURITY.md) invariant 13.
+
+How the three requirements above landed:
+
+- **Tool surface.** Derived, never assembled: the background turn runs at the
+  requester's tier re-resolved at start and clamped to the live turn's, and its
+  tools are `turnModuleToolIds` of that tier, by the same function as a live
+  turn's. A module may only ask for a narrower tier.
+- **CONFIRM.** A background turn cannot register a pending action at all. The
+  base replaces `requireConfirm` in its tool context and refuses the primitive
+  inside it; a module routes a background turn's consequential action to its
+  own unattended approval path (`onConfirmRequest`), and any confirmation
+  happens in a later live turn by the person.
+- **Output and budget.** The result is outbound-filtered and fenced as
+  untrusted data, and the base never feeds it into another turn. Spend is
+  bounded by a required cost ceiling (`maxBudgetUsd`), turn and time ceilings,
+  caps and the module's `admit` hook, and reported on the result for the
+  module to attribute.
+
+What was not built: the SDK's in-turn `Task` subagent stays what it was, a
+helper a module may grant through a G3 runtime inside a contained turn. It
+blocks its parent, dies with it, and returns its output into the parent as a
+tool result, so it is not this seam (the design's option B).
 
 ## 3. Cooperating deployments — the invariants already answer this
 

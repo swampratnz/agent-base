@@ -1,10 +1,10 @@
 # Background turns: a design for module-started subagents
 
-**Status: design only, not implemented. Nothing here is exported.** Per the
-barrel rule (`src/index.ts:12-21`) and [MODULE-API.md](../MODULE-API.md)'s
-status legend, this page describes a seam in prose. When it is built, its
-entry in MODULE-API.md starts as `planned` and the types land in the same
-change as the runtime.
+**Status: built in 0.9.0.** The contract is
+[MODULE-API.md § Background turns](../MODULE-API.md#background-turns)
+(**live**) and the invariant is [SECURITY.md](../SECURITY.md) invariant 13.
+This page stays as the design record; where the build differs from it, see
+[§ 9 As built](#9-as-built).
 
 This is the consumer that [MULTI-AGENT.md](../MULTI-AGENT.md) §2 (lines
 36-71) said would turn "sub-agents within one process" into a planned seam. A
@@ -597,3 +597,42 @@ Each `SECURITY:` test asserts the observable effect, not the call shape.
   - the docs.
 - **No refactor of `runAgentTurn` is required.** Factoring the
   prompt-assembly half into a shared helper is a nice-to-have.
+
+## 9. As built
+
+Design A was built as recommended. Where the build differs from the text
+above, and why:
+
+- **`TurnRuntimeRequest.kind` is optional in the type.** The base always sets
+  it (`'live'` or `'background'`), but a consumer's resolver test that builds
+  a request by hand would stop typechecking if it were required, and the
+  release must be additive. Treat an absent value as `'live'`.
+- **`registerPendingAction` refuses inside a background turn.** §4.2 says the
+  base cannot stop a module that imports the primitive directly. The base's
+  tool-server wrapper runs every background tool handler in an async-local
+  scope (`src/agent/turnScope.ts`), and `registerPendingAction` throws inside
+  it. This is a second layer under the `requireConfirm` replacement, not a
+  replacement for the consumer's review.
+- **The door closes when its live turn ends.** A module that keeps the
+  `startBackgroundTurn` function cannot start work on the person's behalf
+  after their turn is over; the late call is refused `'refused'`.
+- **A module context the base cannot extend fails the background turn
+  closed** (status `'failed'`, no model call). For a live turn it is not an
+  enforcement point, so a frozen live context simply gets no door.
+- **`onConfirmRequest` is synchronous and returns the tool's text**, because
+  `requireConfirm` returns its `ToolResult` synchronously. A non-string
+  answer or a throw is a refusal.
+- **`text` is empty unless the status is `'done'`.** A budget, max-turns or
+  timeout ending has no final answer to filter; the cost is still reported.
+- **`BACKGROUND_TURN_MAX_COST_USD` has no default.** The live turn has no cost
+  ceiling to default to, and `maxCostUsd` is required on every spec, so every
+  background turn still has one. Unset means no deployment ceiling above the
+  module's.
+- **The operator filter takes `platform` too, and an empty filter stops
+  nothing**: stopping everything has to be said with `{ all: true }`.
+- **`handle.done` settles before `onDone` runs**, so an `onDone` that awaits
+  the handle cannot deadlock; `Router.drain` waits for `onDone` as well.
+- **A Stop that fires while the turn runtime is being resolved now ends the
+  turn before any model call.** The listener `execTurn` installs after
+  `query()` would never hear a signal that had already fired. This also closes
+  the same small window for a live turn's Stop.

@@ -49,6 +49,7 @@
     "tests/authorityResolver.test.ts",
     "tests/authorityResolverDefault.test.ts",
     "tests/backgroundJobHealth.test.ts",
+    "tests/backgroundTurns.test.ts",
     "tests/budgetCheckFailureNotice.test.ts",
     "tests/builtinToolArming.test.ts",
     "tests/configSlices.test.ts",

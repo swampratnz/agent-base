@@ -85,6 +85,7 @@ import { registerRuntimeSecret } from './agent/secrets.js';
 import type { AuthorityResolver } from './auth/roles.js';
 import { registerAuthorityResolver } from './auth/roles.js';
 import { registerTurnRuntimeResolver, type TurnRuntimeResolver } from './agent/turnRuntime.js';
+import { registerBackgroundTurnsPolicy, type BackgroundTurnsPolicy } from './agent/backgroundTurns.js';
 import { registerUsageLimitNoticeResolver, type UsageLimitNoticeResolver } from './agent/usageLimitNotice.js';
 import { registerDailyReplyLimitResolver, type DailyReplyLimitResolver } from './dailyReplyLimit.js';
 import type { InteractionOrgResolver } from './storage/repository/interactions.js';
@@ -203,6 +204,16 @@ export interface AgentModule<Ctx = unknown> {
    * dailyReplyLimit.ts.
    */
   dailyReplyLimit?: DailyReplyLimitResolver;
+  /**
+   * OPTIONAL: opt in to background turns (agent-base 0.9.0) — a live turn's
+   * tool starts a second turn for the same person that runs on while the
+   * conversation carries on, via `ToolContext.startBackgroundTurn`. The
+   * process cap, per-key caps, the module's admission rule and where a
+   * background turn's CONFIRM goes. Absent, every start is refused. See
+   * `BackgroundTurnsPolicy` in agent/backgroundTurns.ts and
+   * docs/MODULE-API.md "Background turns".
+   */
+  backgroundTurns?: BackgroundTurnsPolicy;
 
   // --- additive registries -------------------------------------------------
   personas?: readonly { persona: Persona; isDefault?: boolean }[];
@@ -396,6 +407,7 @@ const SINGLETONS: readonly { registry: string; field: keyof AgentModule }[] = Ob
   { registry: 'turn runtime resolver', field: 'turnRuntime' },
   { registry: 'usage limit notice resolver', field: 'usageLimitNotice' },
   { registry: 'daily reply limit resolver', field: 'dailyReplyLimit' },
+  { registry: 'background turns policy', field: 'backgroundTurns' },
 ]);
 
 /**
@@ -470,6 +482,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<Agent> {
     if (mod.turnRuntime) registerTurnRuntimeResolver(mod.turnRuntime);
     if (mod.usageLimitNotice) registerUsageLimitNoticeResolver(mod.usageLimitNotice);
     if (mod.dailyReplyLimit) registerDailyReplyLimitResolver(mod.dailyReplyLimit);
+    if (mod.backgroundTurns) registerBackgroundTurnsPolicy(mod.backgroundTurns);
   }
 
   // 4. additive registries. Base owns ITERATION order inside each of these

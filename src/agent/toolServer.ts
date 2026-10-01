@@ -4,6 +4,9 @@ import type { AdapterLookup, PlatformAdapter } from '../platforms/types.js';
 import type { CallerContext } from '../auth/rbac.js';
 import { getLanguagePreference } from '../storage/repository.js';
 import type { ToolServerTurnState } from './turnState.js';
+import { runInBackgroundScope, type TurnInfo } from './turnScope.js';
+import type { BackgroundStart, BackgroundTurnSpec } from './backgroundTurns.js';
+import type { Tier } from '../platforms/types.js';
 
 /**
  * The base tool-hosting kernel (agent-base plan §2): `buildToolServer` owns
@@ -66,6 +69,13 @@ export interface ToolServerParts<Ctx> {
     getAdapter: AdapterLookup | undefined,
     turnState: ToolServerTurnState | undefined,
     getLangPref: typeof getLanguagePreference,
+    /**
+     * Which kind of turn this context is for, and for a background turn its
+     * id and the module's tag (agent-base 0.9.0). A module that keys per-turn
+     * data by conversation needs it: a background turn shares the live turn's
+     * conversation. Optional, so a factory written before it still fits.
+     */
+    turn?: TurnInfo,
   ) => Ctx;
   /** The declarative tool inventory to attach, in registration order. */
   registry: ReadonlyArray<ToolServerToolDef<Ctx>>;
@@ -190,6 +200,69 @@ export function toolServerName(): string {
 }
 
 /**
+ * What the turn engine tells `buildToolServer` about the turn, beyond the
+ * caller: the live turn's door to start a background turn, or a background
+ * turn's own identity and the base functions that stand in for the module's.
+ */
+export type ToolServerTurn =
+  | {
+      kind: 'live';
+      startBackgroundTurn: (spec: BackgroundTurnSpec) => Promise<BackgroundStart>;
+    }
+  | {
+      kind: 'background';
+      id: string;
+      tag: unknown;
+      /** The base's replacement for the module's `requireConfirm`: it never registers a pending action. */
+      requireConfirm: (
+        description: string,
+        minTier: Tier,
+        run: () => Promise<string>,
+      ) => ToolServerToolResult;
+      /** Asked before every module tool call; a string is the refusal the model gets instead of the call. */
+      beforeTool: () => Promise<string | null>;
+    };
+
+/**
+ * Put the base's per-turn fields on the context the module's `makeContext`
+ * returned. Mutation rather than a copy, deliberately: the context is the
+ * module's own type (a class, a closure bag), and a copy would lose its
+ * prototype and any getter.
+ *
+ * SECURITY: for a background turn this is an enforcement point, so it fails
+ * closed. The module's `requireConfirm` must be replaced and the
+ * `startBackgroundTurn` door must be absent, or the turn does not run. For a
+ * live turn nothing here may break the turn: a context the base cannot extend
+ * (a frozen object, a primitive) simply has no door.
+ */
+function attachTurn(ctx: unknown, turn: ToolServerTurn): void {
+  if (turn.kind === 'live') {
+    if (ctx === null || typeof ctx !== 'object') return;
+    try {
+      Object.assign(ctx, { turnKind: 'live', startBackgroundTurn: turn.startBackgroundTurn });
+    } catch {
+      // A frozen or sealed context: the live turn runs exactly as before.
+    }
+    return;
+  }
+  if (ctx === null || typeof ctx !== 'object') {
+    throw new Error(
+      'background turn: the module tool context is not an object, so CONFIRM cannot be replaced',
+    );
+  }
+  const target = ctx as Record<string, unknown>;
+  target.requireConfirm = turn.requireConfirm;
+  target.turnKind = 'background';
+  if ('startBackgroundTurn' in target) {
+    delete target.startBackgroundTurn;
+    if (target.startBackgroundTurn !== undefined) target.startBackgroundTurn = undefined;
+  }
+  if (target.requireConfirm !== turn.requireConfirm || target.startBackgroundTurn !== undefined) {
+    throw new Error('background turn: the module tool context could not be given the base CONFIRM refusal');
+  }
+}
+
+/**
  * Build the in-process MCP tool server for one agent turn. The tools close
  * over the caller context and the adapter handling this conversation, so
  * RBAC and platform routing are baked in. Layers:
@@ -206,9 +279,13 @@ export function buildToolServer(
   turnState?: ToolServerTurnState,
   getLangPref: typeof getLanguagePreference = getLanguagePreference,
   attach?: readonly string[],
+  turn?: ToolServerTurn,
 ) {
   const { name, registry, makeContext } = registeredParts();
-  const ctx = makeContext(caller, adapter, getAdapter, turnState, getLangPref);
+  const info: TurnInfo =
+    turn?.kind === 'background' ? { kind: 'background', id: turn.id, tag: turn.tag } : { kind: 'live' };
+  const ctx = makeContext(caller, adapter, getAdapter, turnState, getLangPref, info);
+  if (turn) attachTurn(ctx, turn);
   // `attach` (G3): the fully-qualified ids this turn may call. Only those are
   // on the server, so a tool call the CLI sends outside its `allowedTools`
   // finds no such tool. Absent, every registered tool is attached and the
@@ -219,9 +296,30 @@ export function buildToolServer(
     name,
     version: '2.0.0',
     tools: defs.map((def) =>
-      tool(def.name, def.description, def.schema, (args) => def.handler(args, ctx), {
+      tool(def.name, def.description, def.schema, handlerFor(def, ctx, turn), {
         annotations: { readOnlyHint: def.readOnlyHint },
       }),
     ),
   });
+}
+
+/**
+ * The function the SDK calls for one tool. A live turn's is the module handler
+ * as it always was. A background turn's asks `beforeTool` first (a Stop or the
+ * pause flag refuses the call even when the CLI skipped its `PreToolUse`
+ * hooks, which a sandboxed CLI may), then runs the handler inside the
+ * background scope that `registerPendingAction` refuses.
+ */
+function handlerFor<Ctx>(
+  def: ToolServerToolDef<Ctx>,
+  ctx: Ctx,
+  turn: ToolServerTurn | undefined,
+): (args: unknown) => Promise<ToolServerToolResult> {
+  if (turn?.kind !== 'background') return (args) => def.handler(args, ctx);
+  return (args) =>
+    runInBackgroundScope(turn.id, async () => {
+      const refusal = await turn.beforeTool();
+      if (refusal !== null) return { content: [{ type: 'text' as const, text: refusal }], isError: true };
+      return def.handler(args, ctx);
+    });
 }

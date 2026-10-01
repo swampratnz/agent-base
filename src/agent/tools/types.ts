@@ -5,6 +5,8 @@ import type { CallerContext } from '../../auth/rbac.js';
 import type { Config } from '../../config.js';
 import type { getLanguagePreference } from '../../storage/repository.js';
 import type { ToolServerTurnState } from '../turnState.js';
+import type { TurnKind } from '../turnScope.js';
+import type { BackgroundStart, BackgroundTurnSpec } from '../backgroundTurns.js';
 
 /**
  * What an MCP tool handler resolves to — derived from the SDK's own
@@ -68,6 +70,22 @@ export interface ToolContext {
     rawUserId: string,
     platformArg?: Platform,
   ) => Promise<{ platform: Platform; userId: string }>;
+  /**
+   * Which kind of turn this is. Set by the BASE on the context `makeContext`
+   * returned, never by the module, so it is optional here and a factory
+   * written before 0.9.0 typechecks unchanged. In a `'background'` turn the
+   * base has also replaced `requireConfirm` with its own, which never
+   * registers a pending action (docs/SECURITY.md invariant 3).
+   */
+  turnKind?: TurnKind;
+  /**
+   * Start a background turn on behalf of THIS turn's caller (agent-base
+   * 0.9.0, docs/MODULE-API.md "Background turns"). Present only on a live
+   * turn's context, and only while that turn runs; a background turn's
+   * context has none, so a background turn cannot start another. Set by the
+   * base, like `turnKind`.
+   */
+  startBackgroundTurn?: (spec: BackgroundTurnSpec) => Promise<BackgroundStart>;
 }
 
 /**

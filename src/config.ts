@@ -105,6 +105,12 @@ function buildConfig(env: ParsedEnv) {
     agentSkills: {
       enabled: env.AGENT_SKILLS_ENABLED ?? false,
     },
+    /** Deployment ceilings for a background turn; each absent key means the live turn's value (see config/llm.ts). */
+    backgroundTurns: {
+      maxTurns: env.BACKGROUND_TURN_MAX_TURNS,
+      timeoutMs: env.BACKGROUND_TURN_TIMEOUT_MS,
+      maxCostUsd: env.BACKGROUND_TURN_MAX_COST_USD,
+    },
     discord: {
       botToken: env.DISCORD_BOT_TOKEN,
       guildId: env.DISCORD_GUILD_ID,

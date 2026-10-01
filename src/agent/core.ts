@@ -30,7 +30,7 @@ import {
 import { ALL_BUILTIN_TOOLS, isMutatingArmed, MUTATING_BUILTIN_TOOLS } from './builtinTools.js';
 import { runtimeSecrets } from './secrets.js';
 import { finalizeTurnState, type BuiltinWebSearchUse, type TurnStateBag } from './turnState.js';
-import { getCodeAnswersPolicy } from '../storage/policyStore.js';
+import { getCodeAnswersPolicy, type CodeAnswersPolicy } from '../storage/policyStore.js';
 import { queuePendingAlert } from '../pendingAlertQueue.js';
 import {
   buildSystemPrompt,
@@ -40,7 +40,8 @@ import {
   renderRequesterTag,
 } from './systemPrompt.js';
 import { selectPersona } from './personaRegistry.js';
-import { buildToolServer, registeredToolIds, toolServerName } from './toolServer.js';
+import { buildToolServer, registeredToolIds, toolServerName, type ToolServerTurn } from './toolServer.js';
+import { openBackgroundDoor } from './backgroundTurns.js';
 import { resolveTurnRuntime, type TurnRuntime } from './turnRuntime.js';
 import { resolveUsageLimitNotice } from './usageLimitNotice.js';
 import type { ToolServerTurnState } from './turnState.js';
@@ -216,6 +217,10 @@ interface TurnOutcome {
   maxTurnsExceeded?: boolean;
   stopped?: boolean;
   turnState?: Partial<TurnStateBag>;
+  /** The SDK `result` subtype of a non-success result, e.g. `error_max_budget_usd`. A background turn's status reads it. */
+  resultSubtype?: string;
+  /** The turn hit its wall-clock ceiling. A background turn's status reads it. */
+  timedOut?: boolean;
 }
 
 /**
@@ -391,7 +396,12 @@ function shellCwd(): string {
  * while a `PreToolUse` hook is guaranteed to fire either way. Fails closed on
  * a missing actor id or a thrown check.
  */
-function mutatingBuiltinGate(platform: Platform, conversationId: string, actorUserId: string) {
+function mutatingBuiltinGate(
+  platform: Platform,
+  conversationId: string,
+  actorUserId: string,
+  background: boolean = false,
+) {
   return {
     matcher: MUTATING_BUILTIN_TOOLS.join('|'),
     hooks: [
@@ -399,7 +409,9 @@ function mutatingBuiltinGate(platform: Platform, conversationId: string, actorUs
         const toolName = (input as { tool_name?: unknown } | undefined)?.tool_name;
         const named = typeof toolName === 'string' ? toolName : 'That tool';
         try {
-          if (actorUserId && isMutatingArmed(platform, conversationId, actorUserId)) {
+          // A background turn is never armed: an arming is a "this person is
+          // here, right now" grant, and nobody is present in a background turn.
+          if (!background && actorUserId && isMutatingArmed(platform, conversationId, actorUserId)) {
             logger.warn({ platform, conversationId, tool: named }, 'Armed mutating built-in tool call');
             return { continue: true };
           }
@@ -446,6 +458,34 @@ export function turnModuleToolIds(role: CallerContext['role'], platform: Platfor
   return filterFeatureFlaggedTools(toolsForRole(role, platform));
 }
 
+/**
+ * What `buildQueryOptions` needs for a background turn: its clamped ceilings
+ * and the `PreToolUse` gate the registry asks before every tool call. Absent
+ * for a live turn, whose options are then exactly what they were before
+ * background turns existed.
+ */
+export interface BackgroundQueryLimits {
+  maxTurns: number;
+  maxBudgetUsd: number;
+  toolGate: { hooks: Array<(input: unknown) => Promise<HookJSONOutput>> };
+}
+
+/**
+ * What `execTurn` needs to run a background turn: its identity, its clamped
+ * ceilings and the two functions that stand in for the module's (see
+ * `ToolServerTurn` in toolServer.ts).
+ */
+export interface BackgroundExec {
+  id: string;
+  tag: unknown;
+  maxTurns: number;
+  maxBudgetUsd: number;
+  timeoutMs: number;
+  requireConfirm: Extract<ToolServerTurn, { kind: 'background' }>['requireConfirm'];
+  /** `null` lets the tool call run; a string refuses it with that text. */
+  beforeTool: () => Promise<string | null>;
+}
+
 export function buildQueryOptions(
   role: CallerContext['role'],
   systemPrompt: string,
@@ -456,6 +496,7 @@ export function buildQueryOptions(
   actorUserId: string = '',
   onWebSearch?: (use: BuiltinWebSearchUse) => void,
   runtime?: TurnRuntime,
+  background?: BackgroundQueryLimits,
 ) {
   // Web search is a privileged capability: admin+ by default, raisable to
   // super_admin only, or withheld from every tier with
@@ -477,8 +518,14 @@ export function buildQueryOptions(
   // through the outbound secret redaction either.
   //
   // Empty `actorUserId` (the synthetic test call sites) fails closed.
+  //
+  // A background turn is never armed, whatever arming its requester holds in
+  // this conversation (SECURITY.md invariant 1).
   const armed =
-    role === 'super_admin' && actorUserId !== '' && isMutatingArmed(platform, conversationId, actorUserId);
+    !background &&
+    role === 'super_admin' &&
+    actorUserId !== '' &&
+    isMutatingArmed(platform, conversationId, actorUserId);
   // G3: a module's turn runtime may decide the built-in surface instead. Its
   // list replaces both rules above, WebSearch included, and its `armingGate`
   // says whether the mutating tools still need a live arming.
@@ -541,7 +588,17 @@ export function buildQueryOptions(
     // (issue #347): MEMBER_TOOLS is a much narrower surface, so a
     // stuck/injected turn on the highest-volume, lowest-trust tier is
     // bounded to less worst-case cost. admin/super_admin are unchanged.
-    maxTurns: atLeast(role, 'admin') ? config.llm.maxTurns : config.llm.memberMaxTurns,
+    //
+    // A background turn's ceiling is its own, already clamped by the registry
+    // to the deployment's maximum, and it carries a cost ceiling the SDK
+    // enforces itself (`error_max_budget_usd`). A live turn's options are
+    // unchanged: no `maxBudgetUsd` key at all.
+    maxTurns: background
+      ? background.maxTurns
+      : atLeast(role, 'admin')
+        ? config.llm.maxTurns
+        : config.llm.memberMaxTurns,
+    ...(background ? { maxBudgetUsd: background.maxBudgetUsd } : {}),
     ...(resumeSession ? { resume: resumeSession } : {}),
     // Don't load the host machine's ~/.claude config into the agent.
     settingSources: [] as [],
@@ -567,11 +624,16 @@ export function buildQueryOptions(
           skills: [...skillsManifest().enabledSkills],
         }
       : {}),
-    ...(webSearch || armingGate
+    ...(webSearch || armingGate || background
       ? {
           hooks: {
             PreToolUse: [
-              ...(armingGate ? [mutatingBuiltinGate(platform, conversationId, actorUserId)] : []),
+              // A background turn's own gate goes first, on every tool: once
+              // it is stopped or the deployment is paused, no tool call runs.
+              ...(background ? [background.toolGate] : []),
+              ...(armingGate
+                ? [mutatingBuiltinGate(platform, conversationId, actorUserId, background !== undefined)]
+                : []),
               {
                 matcher: 'WebSearch',
                 hooks: [
@@ -1194,6 +1256,7 @@ export async function execTurn(
   getAdapter?: AdapterLookup,
   image?: IncomingMessage['image'],
   signal?: AbortSignal,
+  background?: BackgroundExec,
 ): Promise<TurnOutcome> {
   // Stopped before the model was reached: nothing runs and nothing is spent.
   if (signal?.aborted) return { ok: false, resumeFailed: false, text: '', stopped: true };
@@ -1210,13 +1273,20 @@ export async function execTurn(
   // cannot say where the CLI runs must not have it run here by default.
   let runtime: TurnRuntime | undefined;
   try {
-    runtime = await resolveTurnRuntime({
-      caller,
-      armed:
-        caller.role === 'super_admin' &&
-        caller.userId !== '' &&
-        isMutatingArmed(caller.platform, caller.conversationId, caller.userId),
-    });
+    runtime = await resolveTurnRuntime(
+      background
+        ? // A background turn is never armed, and the module is told which
+          // turn it is so it can sandbox it or find its own record of it.
+          { caller, armed: false, kind: 'background', id: background.id, tag: background.tag }
+        : {
+            caller,
+            armed:
+              caller.role === 'super_admin' &&
+              caller.userId !== '' &&
+              isMutatingArmed(caller.platform, caller.conversationId, caller.userId),
+            kind: 'live',
+          },
+    );
   } catch (err) {
     logger.error(
       { err, conversationId: caller.conversationId },
@@ -1229,18 +1299,58 @@ export async function execTurn(
       fallbackNoticeId: 'internalErrorReply',
     };
   }
+  // A Stop that fired while the runtime was being resolved: the listener below
+  // would never hear it (the signal has already fired), so no model call may
+  // start now.
+  if (signal?.aborted) return { ok: false, resumeFailed: false, text: '', stopped: true };
   // SECURITY (G3): the server attaches only the tools this turn may call. The
   // CLI's `allowedTools` restricts what the model is offered, but the CLI is
   // not trusted to hold to it: a CLI in a sandbox can send a tool call of its
   // own over the control channel, and the SDK serves any tool the server has.
-  const toolServer = buildToolServer(
-    caller,
-    adapter,
-    getAdapter,
-    turnState,
-    undefined,
-    turnModuleToolIds(caller.role, caller.platform),
-  );
+  //
+  // A live turn's context gets the door to start a background turn, open only
+  // while this turn runs. A background turn's gets none (depth one), and the
+  // base's own CONFIRM refusal in place of the module's `requireConfirm`; if
+  // that cannot be put on the module's context, the turn does not run.
+  let door: ReturnType<typeof openBackgroundDoor> | null = null;
+  let turnSetup: ToolServerTurn;
+  if (background) {
+    turnSetup = {
+      kind: 'background',
+      id: background.id,
+      tag: background.tag,
+      requireConfirm: background.requireConfirm,
+      beforeTool: background.beforeTool,
+    };
+  } else {
+    door = openBackgroundDoor({ caller, adapter, getAdapter });
+    turnSetup = { kind: 'live', startBackgroundTurn: door.start };
+  }
+  let toolServer: ReturnType<typeof buildToolServer>;
+  try {
+    toolServer = buildToolServer(
+      caller,
+      adapter,
+      getAdapter,
+      turnState,
+      undefined,
+      turnModuleToolIds(caller.role, caller.platform),
+      turnSetup,
+    );
+  } catch (err) {
+    door?.close();
+    if (!background) throw err;
+    logger.error(
+      { err, backgroundTurnId: background.id },
+      'Background turn tool server refused; the turn does not run',
+    );
+    return {
+      ok: false,
+      resumeFailed: false,
+      text: notice('internalErrorReply'),
+      fallbackNoticeId: 'internalErrorReply',
+    };
+  }
   // Built-in WebSearch runs this turn, reported by the PostToolUse hook
   // buildQueryOptions attaches (WattoBot #100); surfaced on the success bag
   // below under the same absent-not-empty discipline as the module keys.
@@ -1299,6 +1409,13 @@ export async function execTurn(
     caller.userId,
     (use) => webSearches.push(use),
     runtime,
+    background
+      ? {
+          maxTurns: background.maxTurns,
+          maxBudgetUsd: background.maxBudgetUsd,
+          toolGate: { hooks: [backgroundToolGate(background)] },
+        }
+      : undefined,
   );
   // The registered tools this turn was allowed: every one of them must come
   // back in the SDK's `init` message, or the server was dropped (WattoBot
@@ -1447,7 +1564,7 @@ export async function execTurn(
           // path (stdin EOF, then a ~2s grace window), not instantaneously.
           abortController.abort();
           reject(new AgentTurnTimeoutError('agent turn timed out'));
-        }, config.behaviour.agentTurnTimeoutMs);
+        }, background?.timeoutMs ?? config.behaviour.agentTurnTimeoutMs);
       }),
       stopped,
     ]);
@@ -1479,7 +1596,10 @@ export async function execTurn(
     }
     if (err instanceof AgentTurnTimeoutError) {
       logger.error(
-        { conversationId: caller.conversationId, timeoutMs: config.behaviour.agentTurnTimeoutMs },
+        {
+          conversationId: caller.conversationId,
+          timeoutMs: background?.timeoutMs ?? config.behaviour.agentTurnTimeoutMs,
+        },
         'Agent turn timed out',
       );
       // Never a resume failure and never a usage-limit classification — this
@@ -1491,6 +1611,10 @@ export async function execTurn(
         resumeFailed: false,
         text: notice('internalErrorReply'),
         fallbackNoticeId: 'internalErrorReply',
+        timedOut: true,
+        // Whatever the CLI had reported is what was spent; a live turn's
+        // reply never carried it here, so only a background result does.
+        ...(background ? { costUsd } : {}),
       };
     }
     const msg = err instanceof Error ? err.message : String(err);
@@ -1531,6 +1655,7 @@ export async function execTurn(
     if (timeoutHandle) clearTimeout(timeoutHandle);
     if (stopGraceHandle) clearTimeout(stopGraceHandle);
     if (onStop) signal?.removeEventListener('abort', onStop);
+    door?.close();
   }
 
   // Stopped, and the CLI answered the interrupt with its result in time. The
@@ -1564,6 +1689,7 @@ export async function execTurn(
       modelUsage,
       sessionId,
       maxTurnsExceeded: resultSubtype === 'error_max_turns' ? true : undefined,
+      resultSubtype,
     };
   }
 
@@ -1587,5 +1713,134 @@ export async function execTurn(
     modelUsage,
     sessionId,
     ...(Object.keys(bag).length > 0 ? { turnState: bag } : {}),
+  };
+}
+
+/**
+ * A background turn's `PreToolUse` gate on every tool: the registry's
+ * `beforeTool` decides (stopped, or the deployment paused), and a refusal
+ * denies the call with its text. Fails closed on a throw. The base's wrapper
+ * around every module tool handler asks the same question again
+ * (toolServer.ts), because a CLI in a sandbox is not trusted to run hooks.
+ */
+function backgroundToolGate(background: BackgroundExec) {
+  return async (): Promise<HookJSONOutput> => {
+    let refusal: string | null;
+    try {
+      refusal = await background.beforeTool();
+    } catch (err) {
+      logger.error({ err, backgroundTurnId: background.id }, 'Background turn tool gate threw — denying');
+      refusal = 'This background task cannot use tools right now.';
+    }
+    if (refusal === null) return { continue: true };
+    return {
+      continue: true,
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: refusal,
+      },
+    };
+  };
+}
+
+/** What `runBackgroundAgentTurn` hands back to the registry. */
+export interface BackgroundTurnOutcome {
+  ok: boolean;
+  /** The turn's final text on success; empty otherwise. Not yet filtered. */
+  text: string;
+  stopped: boolean;
+  timedOut: boolean;
+  resultSubtype?: string;
+  costUsd?: number;
+  modelUsage?: Record<string, number>;
+  /** The outbound policy inputs, read once for the prompt, reused for the filter. */
+  codeAnswers: CodeAnswersPolicy;
+  languagePreference?: string;
+  responseStyle: string;
+}
+
+/**
+ * Run one background turn (agent-base 0.9.0). The prompt is assembled the way
+ * a FRESH live turn's is, by the same functions, with three differences:
+ *  - there is no session: it never reads or writes the conversation's stored
+ *    session, so it cannot race or poison the live conversation's resume;
+ *  - the system prompt says the shell is not armed, matching the options;
+ *  - `caller.role` is already the clamped tier the registry resolved, so the
+ *    tool surface `execTurn` derives from it is that tier's.
+ *
+ * Only the registry in backgroundTurns.ts calls this; a module reaches it
+ * through `ToolContext.startBackgroundTurn`.
+ */
+export async function runBackgroundAgentTurn(
+  caller: CallerContext,
+  taskText: string,
+  adapter: PlatformAdapter,
+  getAdapter: AdapterLookup | undefined,
+  signal: AbortSignal,
+  background: BackgroundExec,
+): Promise<BackgroundTurnOutcome> {
+  const userText = truncateIncomingMessage(taskText, config.behaviour.maxIncomingMessageChars);
+  const memories = await searchMemory(userText, {
+    platform: caller.platform,
+    conversationId: caller.conversationId,
+  });
+  const codeAnswers = await getCodeAnswersPolicy();
+  let responseStyle: ResponseStyle = 'standard';
+  try {
+    responseStyle = await getResponseStyle(caller.platform, caller.userId);
+  } catch (err) {
+    logger.warn(
+      { err, backgroundTurnId: background.id },
+      'Response-style lookup failed; degrading to standard',
+    );
+  }
+  let languagePreference: LanguagePreference | undefined;
+  try {
+    languagePreference = await getLanguagePreference(caller.platform, caller.userId);
+  } catch (err) {
+    logger.warn({ err, backgroundTurnId: background.id }, 'Language-preference lookup failed');
+  }
+  const persona = selectPersona({ text: userText });
+  const systemPrompt = buildSystemPrompt(
+    caller,
+    { codeAnswers, responseStyle, languagePreference: languagePreference ?? 'auto', shellArmed: false },
+    persona,
+  );
+  const tail = await recentConversationTail(
+    caller.platform,
+    caller.conversationId,
+    config.behaviour.sessionRolloverTailCount,
+  );
+  const prompt = [
+    renderRequesterTag(caller.userName),
+    tail.length > 0 ? renderConversationTail(tail) : '',
+    memories.length > 0 ? renderMemoryContext(memories) : '',
+    userText,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  const outcome = await execTurn(
+    caller,
+    prompt,
+    systemPrompt,
+    adapter,
+    null,
+    getAdapter,
+    undefined,
+    signal,
+    background,
+  );
+  return {
+    ok: outcome.ok,
+    text: outcome.ok ? outcome.text : '',
+    stopped: outcome.stopped === true,
+    timedOut: outcome.timedOut === true,
+    ...(outcome.resultSubtype !== undefined ? { resultSubtype: outcome.resultSubtype } : {}),
+    ...(outcome.costUsd !== undefined ? { costUsd: outcome.costUsd } : {}),
+    ...(outcome.modelUsage !== undefined ? { modelUsage: outcome.modelUsage } : {}),
+    codeAnswers,
+    ...(languagePreference !== undefined ? { languagePreference } : {}),
+    responseStyle,
   };
 }

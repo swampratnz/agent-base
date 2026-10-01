@@ -1,6 +1,7 @@
 {
   "authorityResolver.test.ts": 5,
   "backgroundJobHealth.test.ts": 1,
+  "backgroundTurns.test.ts": 13,
   "builtinToolArming.test.ts": 6,
   "configSlices.test.ts": 2,
   "createAgent.test.ts": 2,
